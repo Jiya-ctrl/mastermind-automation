@@ -1,0 +1,128 @@
+# --------------------------------------------------------------------------
+# Mastermind Automation Studio — production stack.
+#
+# Runs three services behind the existing Traefik proxy on the VPS:
+#   frontend   →  https://${APP_DOMAIN}        (Vite SPA on nginx)
+#   api        →  https://${API_DOMAIN}        (app.py, Flask + worker)
+#   auth       →  https://${AUTH_DOMAIN}       (auth_server.py, Flask)
+#
+# Persistence: data/, output/, and templates/ are bind-mounted from the
+# host so operator state, generated renders, and uploaded templates
+# survive image rebuilds + container restarts.
+#
+# To deploy:
+#   cp .env.example .env.production && edit
+#   docker compose --env-file .env.production up -d --build
+# --------------------------------------------------------------------------
+
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: mastermind-api:latest
+    container_name: mastermind-api
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      # Both Flask processes MUST share SESSION_SECRET so tokens cross.
+      # The full env list lives in .env.production; values below override
+      # for this container only.
+      FLASK_ENV: production
+      TRUSTED_PROXIES: "1"
+      # In-container data paths — bind-mounted to host below.
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./templates:/app/templates
+      - ./config:/app/config
+    networks:
+      - traefik
+      - internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      # Router — Traefik must already have a `websecure` entrypoint on :443
+      # and a cert resolver named `letsencrypt`. Adjust both if the user's
+      # existing Traefik config uses different names.
+      - "traefik.http.routers.mm-api.rule=Host(`${API_DOMAIN}`)"
+      - "traefik.http.routers.mm-api.entrypoints=websecure"
+      - "traefik.http.routers.mm-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.mm-api.loadbalancer.server.port=5000"
+
+  auth:
+    image: mastermind-api:latest
+    depends_on:
+      - api
+    container_name: mastermind-auth
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      FLASK_ENV: production
+      TRUSTED_PROXIES: "1"
+      PYTHONUNBUFFERED: "1"
+    # Same image, different entry — runs auth_server.py instead of app.py.
+    command:
+      - gunicorn
+      - --chdir
+      - /app/api
+      - --bind
+      - 0.0.0.0:5001
+      - --workers
+      - "1"
+      - --threads
+      - "4"
+      - --timeout
+      - "60"
+      - --access-logfile
+      - "-"
+      - --error-logfile
+      - "-"
+      - auth_server:app
+    volumes:
+      - ./data:/app/data
+    networks:
+      - traefik
+      - internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.routers.mm-auth.rule=Host(`${AUTH_DOMAIN}`)"
+      - "traefik.http.routers.mm-auth.entrypoints=websecure"
+      - "traefik.http.routers.mm-auth.tls.certresolver=letsencrypt"
+      - "traefik.http.services.mm-auth.loadbalancer.server.port=5001"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # Baked into the JS bundle at build time. Re-run `docker compose
+        # build frontend` after changing either of these. With stable
+        # subdomains there's no rotation churn — set once.
+        VITE_API_BASE:  https://${API_DOMAIN}
+        VITE_AUTH_API:  https://${AUTH_DOMAIN}
+    image: mastermind-frontend:latest
+    container_name: mastermind-frontend
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.routers.mm-app.rule=Host(`${APP_DOMAIN}`)"
+      - "traefik.http.routers.mm-app.entrypoints=websecure"
+      - "traefik.http.routers.mm-app.tls.certresolver=letsencrypt"
+      - "traefik.http.services.mm-app.loadbalancer.server.port=80"
+
+networks:
+  # Existing Traefik network on the VPS — Traefik already listens on it
+  # for routing. We attach to it instead of declaring a new one.
+  traefik:
+    external: true
+  # Private network for any future internal service-to-service traffic.
+  internal:

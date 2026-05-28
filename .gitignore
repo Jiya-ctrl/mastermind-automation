@@ -1,0 +1,92 @@
+# =============================================================================
+# Secrets — NEVER commit
+# =============================================================================
+# Backend env file: SMTP credentials, auth seed, recovery key.
+api/.env
+api/.env.local
+api/.env.production
+.env
+.env.local
+
+# =============================================================================
+# Operator data — phone numbers, password hashes, delivery history
+# =============================================================================
+# auth.json holds the PBKDF2 hash + recovery-key hash; deliveries.json holds
+# every recipient's phone + send history; recipients.json holds the sheet.
+# The whole data/ directory is operator-owned and must stay local.
+data/
+!data/.gitkeep
+
+# =============================================================================
+# Generated artifacts — never ship
+# =============================================================================
+# Personalised renders the operator's pipeline produced.
+output/
+
+# Templates uploaded by the operator (the bundled stock templates ARE
+# committed; uploaded_* are user replacements and stay local).
+templates/uploaded_*
+
+# =============================================================================
+# Build / dev caches
+# =============================================================================
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Node / Vite
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.turbo/
+
+# Logs
+*.log
+api/*.log
+
+# Local config overrides
+config/settings.local.json
+
+# =============================================================================
+# Editor / OS noise
+# =============================================================================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Claude / agent task artifacts (local-only working notes)
+.claude/
+CLAUDE.local.md
+
+.vercel
+.vercel.bak/
+frontend/.vercel.bak/
+
+# =============================================================================
+# Local dev runtime — created by this machine, never pushed.
+# =============================================================================
+# cloudflared binary cached locally for tunnel rotation during dev/testing.
+.tools/
+# stdout/stderr from background Flask + cloudflared processes.
+.logs/
+# Project-local npm cache (used when C: drive is low; see recover-tunnels.sh).
+.npm-cache/
+# Env backups left behind by the recovery scripts.
+api/.env.bak
+api/.env.vercel.bak
+
+# =============================================================================
+# Production env (lives only on the VPS — never in git)
+# =============================================================================
+# Root-level docker-compose env file. Mirrored across services by compose.
+.env.production
+# Frontend production overrides (Vite bakes these at build time).
+frontend/.env.production
+frontend/.env.local

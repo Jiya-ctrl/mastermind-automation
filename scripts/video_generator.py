@@ -1,0 +1,374 @@
+import datetime
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+# ---------------------------------------------------------------------------
+# Project layout (resolved relative to the repository root, two levels up
+# from this file). Centralising paths here keeps the script portable across
+# machines and avoids hard-coded absolute paths.
+# ---------------------------------------------------------------------------
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "settings.json")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output", "videos")
+
+
+def sanitize_filename(text: str) -> str:
+    """Make `text` safe to use as a filename stem: collapse whitespace into
+    underscores and strip characters that are illegal on Windows. Returns
+    "output1" if the result would be empty."""
+    s = re.sub(r"\s+", "_", text.strip())
+    s = re.sub(r'[<>:"/\\|?*,]', "", s)
+    return s or "output1"
+
+
+# Derive the output filename from the address argument (argv[1]); fall back
+# to the legacy default when no address is supplied.
+_raw_address = sys.argv[1].strip() if len(sys.argv) >= 2 and sys.argv[1] else ""
+OUTPUT_NAME = f"{sanitize_filename(_raw_address)}.mp4" if _raw_address else "output1.mp4"
+
+# External tools — resolved in this order so the pipeline works on any
+# host (Linux deploys, fresh Windows boxes, CI runners) without hand-
+# editing the script:
+#   1. FFMPEG_BIN / FFPROBE_BIN environment variables (operator override)
+#   2. shutil.which("ffmpeg") / shutil.which("ffprobe") (PATH lookup)
+#   3. Hard-coded D:\ffmpeg\bin\ paths (the original Windows dev box)
+# The hard-coded fallback stays last so existing dev workflow keeps
+# working; any other host should set the env vars or put ffmpeg on PATH.
+def _resolve_tool(env_var, exe_name, hard_fallback):
+    val = os.environ.get(env_var, "").strip()
+    if val and os.path.isfile(val):
+        return val
+    found = shutil.which(exe_name)
+    if found:
+        return found
+    return hard_fallback
+
+ffmpeg_path  = _resolve_tool("FFMPEG_BIN",  "ffmpeg",  r"D:\ffmpeg\bin\ffmpeg.exe")
+ffprobe_path = _resolve_tool("FFPROBE_BIN", "ffprobe", r"D:\ffmpeg\bin\ffprobe.exe")
+
+
+def load_settings(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+settings = load_settings(CONFIG_PATH)
+
+# Resolve template path: relative entries in settings are resolved against
+# PROJECT_ROOT so the config file stays portable.
+_template_setting = settings["template_video"]
+template_path = (
+    _template_setting if os.path.isabs(_template_setting)
+    else os.path.join(PROJECT_ROOT, _template_setting)
+)
+output_path = os.path.join(OUTPUT_DIR, OUTPUT_NAME)
+
+# Overlay window: from settings (seconds, absolute timeline of the input).
+OVERLAY_START = float(settings["overlay_start"])
+OVERLAY_END = float(settings["overlay_end"])
+
+# Default overlay content (used when no CLI args are supplied). The address
+# is hand-wrapped at a comma so each line fits the safe-area; {\fs20}\h{\r}
+# is a half-height non-breaking spacer between the Address and Contact
+# blocks (libass override; {\r} resets the style for subsequent lines).
+DEFAULT_NAME_LINE = "Rahul Jain"
+DEFAULT_ADDRESS_LINES = ["SKF Colony, Pune,", "Maharashtra"]
+DEFAULT_CONTACT_LINE = "7770080900"
+# Half-height non-breaking spacer between the Address and Contact blocks.
+# Tightened from \fs20 to \fs12 so the gap reads as breathing room, not as
+# an empty line — keeps the strip compact and the template dominant.
+SECTION_SPACER = r"{\fs12}\h{\r}"
+# Inline weight overrides. Everything in the overlay defaults to SemiBold
+# (set by the style); only the recipient NAME gets true Bold, matching the
+# image renderer's weight-based hierarchy. Labels (Address: / Contact:)
+# render at the same weight as their values — no oversized text anywhere.
+B_OPEN  = r"{\b1}"
+B_CLOSE = r"{\b0}"
+
+
+def build_text_lines(name_line: str, address_lines: list[str], contact_line: str
+                     ) -> list[str]:
+    """Assemble the user-approved labelled overlay block.
+
+    Final layout (mirrors the image renderer for unified branding):
+
+        Address: <address line 1>
+                 <address line 2>     ← only when address wraps
+        (spacer)
+        Contact:
+        <name>                        ← bold, same size as everything else
+        <phone>
+    """
+    out: list[str] = []
+    if address_lines:
+        out.append(f"Address: {address_lines[0]}")
+        # Indent continuation lines under the address value (no label) by
+        # padding with the visual width of "Address: " — libass uses \h
+        # for non-breaking space.
+        indent = r"\h" * 9  # "Address: " is 9 characters
+        for cont in address_lines[1:]:
+            out.append(f"{indent}{cont}")
+
+    out.append(SECTION_SPACER)
+    out.append("Contact:")
+    if name_line:
+        # Name is the only line that gets weight emphasis. Same size as
+        # everything else — premium, balanced hierarchy.
+        out.append(f"{B_OPEN}{name_line}{B_CLOSE}")
+    out.append(contact_line)
+    return out
+
+
+def wrap_address(address: str, max_chars: int = 38) -> list[str]:
+    """Wrap a long address into 1-2 lines by splitting on commas.
+
+    The image renderer wraps with PIL pixel metrics; here we don't have a
+    font instance at this point so we use a character-count heuristic
+    calibrated for Bahnschrift SemiBold at the default fontsize. The
+    overlay's `fit_fontsize` later shrinks the font if even the wrapped
+    line is too wide, so this only needs to be approximately right."""
+    address = address.strip()
+    if len(address) <= max_chars or "," not in address:
+        return [address]
+
+    parts = [p.strip() for p in address.split(",") if p.strip()]
+    # Greedy: fill the first line as full as possible without exceeding
+    # max_chars, then put the rest on the second line.
+    first, second = "", ""
+    for p in parts:
+        candidate = (first + ", " + p) if first else p
+        if len(candidate) <= max_chars:
+            first = candidate
+        else:
+            second = (second + ", " + p) if second else p
+    if not second:
+        return [first]
+    return [first, second]
+
+
+def overlay_content_from_argv() -> tuple[str, list[str], str]:
+    """Return (name_line, address_lines, contact_line).
+
+    argv[1]=address, argv[2]=phone, argv[3]=name (optional).
+
+    * Address is wrapped to 1-2 lines on commas so long inputs stay
+      inside the safe area.
+    * If address and phone are present but name is missing, we render
+      the Address + Phone layout (no Name section).
+    * If anything required is missing, we fall back to the bundled
+      defaults.
+    """
+    if len(sys.argv) >= 3 and sys.argv[1] and sys.argv[2]:
+        name = sys.argv[3].strip() if len(sys.argv) >= 4 and sys.argv[3] else ""
+        return name, wrap_address(sys.argv[1]), sys.argv[2]
+    return DEFAULT_NAME_LINE, DEFAULT_ADDRESS_LINES, DEFAULT_CONTACT_LINE
+
+
+name_line, address_lines, contact_line = overlay_content_from_argv()
+TEXT_LINES = build_text_lines(name_line, address_lines, contact_line)
+# Use a widely available font on Linux production containers.
+# Bahnschrift may exist on Windows, but Vercel/Linux does not ship it.
+FONT_NAME = "DejaVu Sans"
+BOLD = False
+TEXT_COLOR = settings["font_color"]                # from config
+BASE_FONTSIZE = int(settings["font_size"])         # from config (auto-fits down)
+SHADOW_ALPHA = 0.15          # barely-there shadow, just enough to separate
+SHADOW_PX = 1
+BOTTOM_MARGIN_PX = 70        # ASS MarginV: clear space below the bottom line
+
+
+def rgb_hex_to_ass(hex_color: str, alpha: float = 1.0) -> str:
+    """Convert '#RRGGBB' + opacity (1.0 = fully visible) to ASS '&HAABBGGRR'.
+    ASS alpha is inverted: 00 = opaque, FF = fully transparent."""
+    h = hex_color.lstrip("#")
+    r, g, b = h[0:2], h[2:4], h[4:6]
+    aa = round((1.0 - alpha) * 255)
+    return f"&H{aa:02X}{b}{g}{r}".upper()
+
+
+def get_duration(video_path: str) -> float:
+    out = subprocess.check_output([
+        ffprobe_path,
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "json",
+        video_path,
+    ])
+    return float(json.loads(out)["format"]["duration"])
+
+
+def get_video_size(video_path: str) -> tuple[int, int]:
+    out = subprocess.check_output([
+        ffprobe_path,
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "json",
+        video_path,
+    ])
+    s = json.loads(out)["streams"][0]
+    return int(s["width"]), int(s["height"])
+
+
+_ASS_OVERRIDE_RE = re.compile(r"\\h|\{[^}]*\}")
+
+
+def _visible_length(line: str) -> int:
+    """Return the number of glyph-equivalent characters libass will draw.
+
+    Strips ASS overrides ({\b1}, {\fs20}, etc.) and the \\h non-breaking
+    space marker so `fit_fontsize` doesn't shrink the font just because
+    the source contains markup that doesn't actually render."""
+    return len(_ASS_OVERRIDE_RE.sub("", line))
+
+
+def fit_fontsize(lines: list[str], video_width: int, fontsize: int,
+                 side_margin_pct: float = 0.05,
+                 avg_char_width_ratio: float = 0.46) -> int:
+    """Shrink fontsize until the longest line fits in (video_width - 2*margin).
+    Calibrated for libass-rendered Bahnschrift SemiBold: avg glyph width
+    ~0.46 * fontsize. 5% side safe-area is comfortable on mobile."""
+    longest_chars = max((_visible_length(line) for line in lines), default=1)
+    while fontsize > 16:
+        usable_px = video_width * (1 - 2 * side_margin_pct)
+        if longest_chars * fontsize * avg_char_width_ratio <= usable_px:
+            return fontsize
+        fontsize -= 2
+    return fontsize
+
+
+def seconds_to_ass_time(seconds: float) -> str:
+    """Convert seconds (e.g. 61.0) to ASS H:MM:SS.cs (e.g. '0:01:01.00')."""
+    cs = int(round(seconds * 100))
+    h, cs = divmod(cs, 360_000)
+    m, cs = divmod(cs, 6_000)
+    s, cs = divmod(cs, 100)
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def build_ass(lines: list[str], play_w: int, play_h: int, fontsize: int,
+              start_s: float, end_s: float) -> str:
+    """Build a minimal libass v4+ document. Brand-blue text in regular weight,
+    very light drop-shadow, no outline, no background box, bottom-center."""
+    bold_flag = -1 if BOLD else 0
+    body = "\\N".join(lines)
+    primary = rgb_hex_to_ass(TEXT_COLOR, alpha=1.0)         # fully opaque fill
+    shadow = rgb_hex_to_ass("#000000", alpha=SHADOW_ALPHA)  # light black shadow
+    return (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {play_w}\n"
+        f"PlayResY: {play_h}\n"
+        "ScaledBorderAndShadow: yes\n"
+        "WrapStyle: 2\n"
+        "\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+        "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        # BorderStyle=1 (outline+shadow), Outline=0 (no outline ring),
+        # Shadow=SHADOW_PX, Alignment=2 (bottom-center).
+        f"Style: Addr,{FONT_NAME},{fontsize},"
+        f"{primary},&H000000FF,&H00000000,{shadow},"
+        f"{bold_flag},0,0,0,100,100,0,0,1,0,{SHADOW_PX},2,40,40,"
+        f"{BOTTOM_MARGIN_PX},1\n"
+        "\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
+        "MarginV, Effect, Text\n"
+        f"Dialogue: 0,{seconds_to_ass_time(start_s)},"
+        f"{seconds_to_ass_time(end_s)},Addr,,0,0,0,,{body}\n"
+    )
+
+
+if not os.path.isfile(template_path):
+    print("Template video not found:", template_path)
+    sys.exit(1)
+
+
+def describe(path: str) -> str:
+    st = os.stat(path)
+    mtime = datetime.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")
+    h = hashlib.md5()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return f"size={st.st_size:,}B  mtime={mtime}  md5={h.hexdigest()[:12]}"
+
+
+abs_template = os.path.abspath(template_path)
+abs_output = os.path.abspath(output_path)
+print("=" * 60)
+print("INPUT  template_path :", abs_template)
+print("INPUT  template info :", describe(abs_template))
+print("OUTPUT output_path   :", abs_output)
+print("=" * 60)
+
+duration = get_duration(template_path)
+start = max(0.0, OVERLAY_START)
+end = min(duration, OVERLAY_END)
+if end <= start:
+    print(f"Overlay window {OVERLAY_START}-{OVERLAY_END}s is outside video duration {duration:.2f}s")
+    sys.exit(1)
+print(f"Video duration: {duration:.2f}s -> overlay from {start:.2f}s to {end:.2f}s")
+
+# Fontsize comes from settings.json; fit_fontsize is a safety net that shrinks
+# further only if the configured size would cause a line to overflow the frame.
+video_w, video_h = get_video_size(template_path)
+is_portrait = video_h > video_w
+fontsize = fit_fontsize(TEXT_LINES, video_w, BASE_FONTSIZE)
+print(f"Frame {video_w}x{video_h}  portrait={is_portrait}  fontsize={fontsize}  bold={BOLD}")
+print("Lines:")
+for line in TEXT_LINES:
+    print("   ", line)
+
+# Stage the .ass overlay in a working dir; run ffmpeg with cwd=work_dir so
+# the filter argument is just `ass=overlay.ass` (no Windows ':' escape pain
+# in absolute paths).
+work_dir = tempfile.mkdtemp(prefix="vidgen_")
+ass_path = os.path.join(work_dir, "overlay.ass")
+ass_doc = build_ass(TEXT_LINES, video_w, video_h, fontsize, start, end)
+with open(ass_path, "w", encoding="utf-8", newline="\n") as f:
+    f.write(ass_doc)
+
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+cmd = [
+    ffmpeg_path,
+    "-y",
+    "-i", template_path,
+    "-vf", "ass=overlay.ass",
+    "-codec:a", "copy",
+    output_path,
+]
+
+# Remove any stale output so we can prove a fresh file was created.
+if os.path.exists(output_path):
+    os.remove(output_path)
+
+print("Running ffmpeg with the following command:")
+for token in cmd:
+    print("   ", token)
+print("CWD:", work_dir)
+print("ASS overlay:\n" + ass_doc)
+
+result = subprocess.run(cmd, cwd=work_dir)
+shutil.rmtree(work_dir, ignore_errors=True)
+
+if result.returncode != 0:
+    print("ffmpeg failed with exit code", result.returncode)
+    sys.exit(result.returncode)
+
+print("=" * 60)
+print("OUTPUT written to    :", abs_output)
+print("OUTPUT info          :", describe(abs_output))
+print("=" * 60)
+print(f"Generated video: {abs_output}")
+print("Done!")

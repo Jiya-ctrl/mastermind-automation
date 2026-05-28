@@ -1,0 +1,54 @@
+# Don't ship local dev runtime junk into the image.
+# Each entry mirrors the .gitignore but is enforced at docker-build time
+# even if a file is git-tracked.
+
+# Runtime state (mounted as volumes in production, not built in).
+data/
+output/
+templates/uploaded_*
+
+# Local dev tunneling + logs.
+.tools/
+.logs/
+.npm-cache/
+.vercel/
+.vercel.bak/
+
+# Backend secrets — runtime only via compose env_file.
+api/.env
+api/.env.local
+api/.env.bak
+api/.env.vercel
+api/.env.vercel.bak
+
+# Frontend build output (the Dockerfile rebuilds it).
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.turbo/
+frontend/.env.local
+frontend/.env.production
+frontend/.vercel/
+frontend/.vercel.bak/
+
+# Python caches.
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Editor / OS noise.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Agent working notes — not relevant to the image.
+.claude/
+CLAUDE.local.md
+
+# Git itself — Docker doesn't need the history.
+.git/
+.gitignore

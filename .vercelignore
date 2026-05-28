@@ -1,0 +1,41 @@
+# Vercel deploys only the React/Vite frontend in `frontend/`. Keep the
+# upload payload tight so Flask source, secrets, generated media, and
+# operator data never leave the machine.
+
+# Secrets — also covered by .gitignore but listed here as a hard belt.
+api/.env
+api/.env.*
+.env
+.env.local
+.env.production
+
+# Flask backend + generator scripts — not part of the static deploy.
+api/
+scripts/
+config/
+
+# Operator data + generated artifacts.
+data/
+output/
+templates/uploaded_*
+
+# Python caches and tooling.
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Frontend build leftovers (Vercel runs its own build).
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Old backups + tooling configs we don't ship.
+.vercel.bak/
+frontend/.vercel.bak/
+.claude/
+*.log
+api/*.log
