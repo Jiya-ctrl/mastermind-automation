@@ -207,10 +207,15 @@ function Abacus({ onUnlock }) {
     playBeadClick(vol)
   }
 
+  // Ambient bead drift — silent, continuous. A new rod activates every
+  // 1200ms; the previous move's 1600ms snapback overlaps the next move,
+  // so 1–3 beads are visibly in motion at any moment without ever feeling
+  // jittery. Sound is fired ONLY by the click handler, never by this
+  // loop, and the loop ignores tab focus so the page stays alive when
+  // the operator returns from another window.
   useEffect(() => {
     if (unlocking) return
     const id = setInterval(() => {
-      if (!audioActiveRef.current) return
       if (inPatternRef.current) return
       const idx = Math.floor(Math.random() * ROD_COUNT)
       const dir = Math.random() < 0.5 ? -1 : 1
@@ -221,13 +226,11 @@ function Abacus({ onUnlock }) {
           i !== idx ? c : Math.max(2, Math.min(7, c + dir))
         )
       })
-      tick(0.06)
       setTimeout(() => {
         if (original === null || inPatternRef.current) return
-        if (!audioActiveRef.current) return
         setCounts((prev) => prev.map((c, i) => (i !== idx ? c : original)))
-      }, 1800)
-    }, 6500)
+      }, 1600)
+    }, 1200)
     return () => clearInterval(id)
   }, [unlocking])
 
@@ -625,13 +628,20 @@ export default function Login() {
     if (isAuthenticated()) navigate(returnTo, { replace: true })
   }, [navigate, returnTo])
 
-  const [userId, setUserId]         = useState(getFixedUserId())
+  const [userId, setUserId]         = useState('')
   const [password, setPassword]     = useState('')
   const [showPw, setShowPw]         = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError]           = useState(null)
   const [modalOpen, setModalOpen]   = useState(false)
   const [toast, setToast]           = useState(null)
+  // Chrome/Edge/Safari aggressively autofill saved credentials into login
+  // forms regardless of value="" or autoComplete="off". The reliable
+  // counter is to render both inputs as `readonly` on page load so the
+  // autofill scan skips them, then drop the lock the moment the operator
+  // clicks any field. By the time they're typing, autofill's pass is done.
+  const [autofillLock, setAutofillLock] = useState(true)
+  const releaseAutofillLock = () => setAutofillLock(false)
   // Track whether this browser has a per-device quick-unlock token enrolled.
   // Drives the subtle hint shown below the abacus. Initialised lazily so
   // we don't hit localStorage during module init (SSR-safe).
@@ -777,7 +787,7 @@ export default function Login() {
         <div className="login-right-deco login-right-deco-tr" aria-hidden="true" />
         <div className="login-right-deco login-right-deco-br" aria-hidden="true" />
 
-        <form className="login-card" onSubmit={onSubmit} noValidate>
+        <form className="login-card" onSubmit={onSubmit} noValidate autoComplete="off">
           <h2 className="login-card-title">Automation Workspace</h2>
           <p className="login-card-sub">
             Secure access to the Mastermind Abacus automation platform.
@@ -791,11 +801,14 @@ export default function Login() {
                 <input
                   id="login-userid"
                   type="text"
-                  autoComplete="username"
+                  name="mm-user-id"
+                  autoComplete="off"
                   className="login-input"
                   placeholder="Enter your User ID"
                   value={userId}
                   onChange={(e) => setUserId(e.target.value)}
+                  readOnly={autofillLock}
+                  onFocus={releaseAutofillLock}
                   required
                 />
               </div>
@@ -808,11 +821,14 @@ export default function Login() {
                 <input
                   id="login-pw"
                   type={showPw ? 'text' : 'password'}
-                  autoComplete="current-password"
+                  name="mm-workspace-pw"
+                  autoComplete="new-password"
                   className="login-input login-input-with-suffix"
                   placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  readOnly={autofillLock}
+                  onFocus={releaseAutofillLock}
                   required
                 />
                 <button
@@ -842,7 +858,7 @@ export default function Login() {
           </div>
 
           <div className="login-card-foot">
-            Trouble signing in? <span className="login-card-foot-strong">Contact your workspace admin</span>
+            Time to dig in. Let's automate.
           </div>
         </form>
 

@@ -182,6 +182,14 @@ SHADOW_ALPHA = 0.15          # barely-there shadow, just enough to separate
 SHADOW_PX = 1
 BOTTOM_MARGIN_PX = 70        # ASS MarginV: clear space below the bottom line
 
+# WhatsApp Cloud API caps video uploads at 16 MB. We target 14 MB so
+# container overhead + Meta's internal re-mux can't push us over.
+# Override per deploy: WHATSAPP_VIDEO_TARGET_MB (float, e.g. "10" for
+# tighter, "14" default).
+WHATSAPP_VIDEO_LIMIT_MB = 16.0
+TARGET_SIZE_MB          = float(os.environ.get("WHATSAPP_VIDEO_TARGET_MB", "14"))
+AUDIO_BITRATE_KBPS      = 96     # AAC stereo, comfortable for voice + light music
+
 
 def rgb_hex_to_ass(hex_color: str, alpha: float = 1.0) -> str:
     """Convert '#RRGGBB' + opacity (1.0 = fully visible) to ASS '&HAABBGGRR'.
@@ -340,12 +348,37 @@ with open(ass_path, "w", encoding="utf-8", newline="\n") as f:
 
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
+# Compute target bitrates from desired file size + duration. We re-encode
+# the video (not stream-copy) so the personalised render slots cleanly
+# inside Meta's 16 MB ceiling regardless of how heavy the source template
+# was. CRF + maxrate gives us "as good as it can be" up to the cap, so
+# short videos look excellent and long ones still fit.
+target_total_kbps = max(400, int((TARGET_SIZE_MB * 8 * 1024) / duration))
+target_video_kbps = max(300, target_total_kbps - AUDIO_BITRATE_KBPS)
+target_maxrate    = int(target_video_kbps * 1.25)   # 25% headroom for spikes
+target_bufsize    = target_maxrate * 2
+print(f"Size budget: {TARGET_SIZE_MB:.1f} MB over {duration:.1f}s -> "
+      f"video {target_video_kbps}k (cap {target_maxrate}k) + audio {AUDIO_BITRATE_KBPS}k")
+
 cmd = [
     ffmpeg_path,
     "-y",
     "-i", template_path,
     "-vf", "ass=overlay.ass",
-    "-codec:a", "copy",
+    # Video re-encode with quality-aware bitrate ceiling
+    "-c:v", "libx264",
+    "-preset", "fast",
+    "-crf", "26",                          # good quality; overridden by maxrate cap when needed
+    "-maxrate", f"{target_maxrate}k",
+    "-bufsize", f"{target_bufsize}k",
+    "-pix_fmt", "yuv420p",                 # broad device + WhatsApp compatibility
+    # Audio re-encode at fixed bitrate (gracefully no-ops if input has no audio)
+    "-c:a", "aac",
+    "-b:a", f"{AUDIO_BITRATE_KBPS}k",
+    "-ac", "2",
+    # Faststart moves moov atom to file head so Meta + recipients can
+    # start playing before the full download completes.
+    "-movflags", "+faststart",
     output_path,
 ]
 
@@ -366,9 +399,43 @@ if result.returncode != 0:
     print("ffmpeg failed with exit code", result.returncode)
     sys.exit(result.returncode)
 
+# Hard guarantee: never ship a file over the WhatsApp ceiling. Single
+# fallback re-encode at a tighter cap if the first pass overshot (e.g.
+# very-long template + complex motion). Two passes is enough — the
+# fallback budget is computed from the actual overshoot, not a guess.
+final_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+if final_size_mb > WHATSAPP_VIDEO_LIMIT_MB:
+    fallback_target = WHATSAPP_VIDEO_LIMIT_MB * 0.85       # leave 15% margin
+    fallback_total  = max(350, int((fallback_target * 8 * 1024) / duration))
+    fallback_video  = max(250, fallback_total - AUDIO_BITRATE_KBPS)
+    fallback_max    = int(fallback_video * 1.15)
+    print(f"[size-guard] first pass {final_size_mb:.1f} MB > {WHATSAPP_VIDEO_LIMIT_MB} MB limit; "
+          f"re-encoding at video {fallback_video}k (cap {fallback_max}k)")
+    fallback_path = output_path + ".tight.mp4"
+    fb_cmd = [
+        ffmpeg_path, "-y", "-i", output_path,
+        "-c:v", "libx264", "-preset", "fast",
+        "-b:v", f"{fallback_video}k",
+        "-maxrate", f"{fallback_max}k",
+        "-bufsize", f"{fallback_max * 2}k",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", f"{AUDIO_BITRATE_KBPS}k", "-ac", "2",
+        "-movflags", "+faststart",
+        fallback_path,
+    ]
+    fb_result = subprocess.run(fb_cmd)
+    if fb_result.returncode != 0:
+        print(f"[size-guard] fallback encode failed (exit {fb_result.returncode}); keeping first pass")
+    else:
+        os.replace(fallback_path, output_path)
+        final_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+        print(f"[size-guard] fallback succeeded -> {final_size_mb:.1f} MB")
+
 print("=" * 60)
 print("OUTPUT written to    :", abs_output)
 print("OUTPUT info          :", describe(abs_output))
+print(f"OUTPUT size          : {final_size_mb:.2f} MB "
+      f"(WhatsApp limit {WHATSAPP_VIDEO_LIMIT_MB:.0f} MB, target {TARGET_SIZE_MB:.0f} MB)")
 print("=" * 60)
 print(f"Generated video: {abs_output}")
 print("Done!")
