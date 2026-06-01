@@ -1,0 +1,61 @@
+name: Deploy to Hostinger VPS
+
+# Auto-deploy pipeline.
+#  - Fires on every push to main that touches a deployable file.
+#  - Markdown-only commits (docs / playbook / README tweaks) are skipped
+#    so editing CLIENT_DEPLOY.md doesn't spend CI minutes + rebuild.
+#  - workflow_dispatch lets the operator force a redeploy from the
+#    Actions tab without making a code change.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  workflow_dispatch:
+
+# Serialise: if two pushes land back-to-back we don't want two SSH
+# sessions tearing into Docker concurrently. The second push waits.
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Pull + rebuild on Hostinger
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: SSH into VPS and redeploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host:            ${{ secrets.VPS_HOST }}
+          username:        ${{ secrets.VPS_USER }}
+          key:             ${{ secrets.VPS_SSH_KEY }}
+          timeout:         60s
+          command_timeout: 12m
+          script: |
+            set -euo pipefail
+
+            echo "==> Step 1/4: Pulling latest code from origin/main"
+            cd /opt/mastermind-automation
+            git fetch origin main
+            git reset --hard origin/main
+            git log -1 --oneline
+
+            echo
+            echo "==> Step 2/4: Rebuilding Docker images (using layer cache)"
+            docker compose --env-file .env.production up -d --build
+
+            echo
+            echo "==> Step 3/4: Pruning unused images"
+            docker image prune -f
+
+            echo
+            echo "==> Step 4/4: Container status"
+            docker compose ps
+
+            echo
+            echo "==> Deploy complete."
