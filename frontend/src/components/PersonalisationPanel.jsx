@@ -8,6 +8,25 @@ const TABS = [
   { key: 'position',   label: '📐 Position' },
 ]
 
+// Curated 16-colour palette — brand orange + warm neutrals + a few
+// accent colours covering most real-world contact-card scenarios.
+// Operator can still pick anything via the color input above.
+const COLOUR_PRESETS = [
+  '#0B1C30', '#1F2937', '#475569', '#000000',  // dark navy / charcoal / slate / black
+  '#FFFFFF', '#FFF1DC', '#F1ECE2', '#E5E7EB',  // white / cream / off-white / light gray
+  '#F97316', '#FB923C', '#EA580C', '#B45309',  // brand orange family
+  '#DC2626', '#10B981', '#3B82F6', '#F59E0B',  // accent (red/green/blue/gold)
+]
+
+// Mock data used in the live preview cards — looks like a real
+// recipient so the operator can read the actual styling instead of
+// looking at lorem ipsum.
+const MOCK_PREVIEW = {
+  name:    'Jiya Bafna',
+  phone:   '9075105823',
+  address: 'Shreeji Valley, Indore',
+}
+
 // Curated font cascade — system-safe defaults so renders never fall
 // back to a missing font. Operator picks from this list; the API
 // validator accepts any string up to 64 chars, so power users can
@@ -239,7 +258,7 @@ export default function PersonalisationPanel() {
               <ColorField
                 value={cfg.font_color}
                 onChange={(v) => set('font_color', v)}
-                presets={['#0B1C30', '#FFFFFF', '#FFF1DC', '#F97316', '#1F2937', '#111827']}
+                presets={COLOUR_PRESETS}
               />
             </Row>
             <Row label="Bold the name line" hint="Highlights the recipient's name relative to the rest of the block">
@@ -298,7 +317,7 @@ export default function PersonalisationPanel() {
                 <ColorField
                   value={cfg.strip_color}
                   onChange={(v) => set('strip_color', v)}
-                  presets={['#F97316', '#FFFFFF', '#0B1C30', '#10B981', '#3B82F6', '#EF4444']}
+                  presets={COLOUR_PRESETS}
                 />
               </Row>
             )}
@@ -368,6 +387,24 @@ export default function PersonalisationPanel() {
         )}
       </div>
 
+      {/* Live preview — updates in real time as the operator edits. Two
+          mock cards (image + video) so the styling is judged in the
+          same context it'll render. Pure CSS preview — no backend hit
+          per keystroke. */}
+      <div className="pstyle-preview-section">
+        <div className="pstyle-preview-head">
+          <h3>🔍 Live preview</h3>
+          <p className="pstyle-preview-sub">
+            Updates as you edit. Real renders will use your actual template
+            in place of the gray placeholder.
+          </p>
+        </div>
+        <div className="pstyle-preview-grid">
+          <PreviewCard kind="image" cfg={cfg} />
+          <PreviewCard kind="video" cfg={cfg} />
+        </div>
+      </div>
+
       {error && <div className="pstyle-error">⚠ {error}</div>}
       {toast && (
         <div className={`pstyle-toast pstyle-toast-${toast.kind}`} role="status">
@@ -375,6 +412,95 @@ export default function PersonalisationPanel() {
         </div>
       )}
     </section>
+  )
+}
+
+
+// ---------- Live preview card ----------------------------------------------
+
+/**
+ * Visual mock of how a personalised image/video will look with the current
+ * config. Pure CSS — no backend round-trip — so the operator gets instant
+ * feedback while dragging sliders. Aspect ratios match real outputs
+ * (4:5 for image, 9:16 for video) so the proportions read correctly.
+ */
+function PreviewCard({ kind, cfg }) {
+  const isImage = kind === 'image'
+
+  // Strip background colour — derived from background_mode + strip_color.
+  // 'on_template' renders without a coloured strip so the text floats on
+  // the dark placeholder, matching production behaviour.
+  const stripBg =
+    cfg.background_mode === 'orange_strip' ? '#F97316' :
+    cfg.background_mode === 'white_strip'  ? '#FFFFFF' :
+    cfg.background_mode === 'custom_strip' ? cfg.strip_color :
+    'transparent'
+
+  // Preview font size is scaled — real videos are 1920px tall, the
+  // preview is ~260px. A linear scale (46→6px) would be unreadable, so
+  // we use a perceptual size that stays legible but reacts to changes.
+  const previewFontPx = Math.max(10, Math.min(22, Math.round(cfg.font_size * 0.34)))
+
+  // Strip height as % of card height, only relevant when a strip mode
+  // is selected. on_template falls back to "auto" so the text-block
+  // sizes itself to its content.
+  const stripHeightStyle =
+    cfg.background_mode === 'on_template'
+      ? { height: 'auto', padding: '10px 14px' }
+      : { height: `${Math.round(cfg.strip_height_pct * 100)}%`, padding: '12px 14px' }
+
+  // Vertical alignment within the card — drives flexbox justify-content
+  // on the wrapper so the overlay sits where the operator chose.
+  const justify =
+    cfg.position === 'top'    ? 'flex-start' :
+    cfg.position === 'center' ? 'center'     :
+                                'flex-end'
+
+  return (
+    <div className="pstyle-preview-card">
+      <div className="pstyle-preview-card-label">
+        {isImage ? '📷 Image render' : '🎬 Video render (last 5.5s)'}
+      </div>
+      <div className={`pstyle-preview-frame pstyle-preview-frame-${kind}`}>
+        <div className="pstyle-preview-placeholder">
+          Template {isImage ? 'image' : 'video'} plays here
+        </div>
+        <div
+          className="pstyle-preview-overlay-wrap"
+          style={{ justifyContent: justify }}
+        >
+          <div
+            className="pstyle-preview-overlay"
+            style={{
+              ...stripHeightStyle,
+              background:  stripBg,
+              color:       cfg.font_color,
+              fontFamily:  `'${cfg.font_family}', system-ui, sans-serif`,
+              fontSize:    previewFontPx,
+              textShadow:  cfg.shadow_opacity > 0
+                ? `0 1px 2px rgba(0,0,0,${cfg.shadow_opacity})`
+                : 'none',
+            }}
+          >
+            <div className="pstyle-preview-line">
+              Address: {MOCK_PREVIEW.address}
+            </div>
+            <div className="pstyle-preview-line pstyle-preview-line-label">
+              Contact:
+            </div>
+            <div
+              className="pstyle-preview-line"
+              style={{ fontWeight: cfg.bold_name ? 700 : 400 }}
+            >
+              {MOCK_PREVIEW.name}
+            </div>
+            <div className="pstyle-preview-line">
+              {MOCK_PREVIEW.phone}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
