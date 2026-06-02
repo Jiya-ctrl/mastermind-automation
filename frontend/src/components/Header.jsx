@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import NotificationCenter from './NotificationCenter'
 import { signOut as authSignOut } from '../auth'
 
 export default function Header() {
@@ -81,8 +80,6 @@ export default function Header() {
       </div>
 
       <div className="header-right">
-        <NotificationCenter />
-
         <div className="profile-wrapper" ref={wrapperRef}>
           <button
             type="button"
