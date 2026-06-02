@@ -577,27 +577,6 @@ export default function Sheets() {
     } catch { /* ignore */ }
   }
 
-  /** Pause / resume the currently-running generation job. The backend
-   *  keeps the in-flight row to completion (no partial files), then idles
-   *  the worker until resume() flips the flag back. */
-  async function togglePause() {
-    if (!job || !job.id) return
-    const path = job.paused ? 'resume' : 'pause'
-    try {
-      const res = await fetch(`${API_BASE}/generate-jobs/${job.id}/${path}`, {
-        method: 'POST',
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok || data.status !== 'success') {
-        throw new Error(data.error || `HTTP ${res.status}`)
-      }
-      // Optimistic flip — the next poll will confirm.
-      setJob((j) => j ? { ...j, paused: !j.paused } : j)
-    } catch (e) {
-      setError(`Could not ${path} job: ${e.message || e}`)
-    }
-  }
-
   // ---------- derived state ----------
   const issueByIndex = useMemo(() => {
     const map = new Map()
@@ -642,47 +621,6 @@ export default function Sheets() {
               onClick={() => setAddOpen((x) => !x)}
               disabled={editMode || generating}
             >➕ Add New Sheet</button>
-            {/* Pause / Resume — three-state, state-aware classes:
-                  · active    (running)        : green dot, amber pulse glow
-                  · pausing   (transient)      : amber spinner, disabled
-                  · paused    (worker idle)    : amber dot, no animation
-                  · idle      (no active queue): grey dot, dimmed */}
-            {(() => {
-              const isPausing = generating && job?.paused && !job?.pauseEffective
-              const isPaused  = generating && job?.paused &&  job?.pauseEffective
-              const isActive  = generating && !job?.paused
-              const cls =
-                !generating ? ' sheets-pause-btn-idle' :
-                isPausing   ? ' sheets-pause-btn-pausing' :
-                isPaused    ? ' sheets-pause-btn-paused' :
-                              ' sheets-pause-btn-active'
-              const label =
-                isPausing ? 'Pausing…' :
-                isPaused  ? 'Resume Generation' :
-                            'Pause Generation'
-              const title =
-                !generating ? 'No active generation queue' :
-                isPausing   ? 'Pausing — current render finishing' :
-                isPaused    ? 'Resume the generation queue' :
-                              'Pause the generation queue (current row finishes first)'
-              return (
-                <button
-                  type="button"
-                  className={`btn sheets-pause-btn${cls}`}
-                  onClick={togglePause}
-                  disabled={!generating || isPausing}
-                  title={title}
-                >
-                  {isPausing
-                    ? <span className="sheets-pause-spinner" aria-hidden="true" />
-                    : <span className="sheets-pause-dot"     aria-hidden="true" />}
-                  <span className="sheets-pause-icon" aria-hidden="true">
-                    {isPausing ? '' : isPaused ? '▶' : '⏸'}
-                  </span>
-                  <span className="sheets-pause-label">{label}</span>
-                </button>
-              )
-            })()}
             {/* Trigger stays inline inside the banner; the menu is
                 portal-mounted on document.body so the banner's
                 overflow:hidden cannot clip it. */}
@@ -1111,22 +1049,11 @@ export default function Sheets() {
             sheet attached, Open Sheet + Sync now live in the top
             "Google Sheet connected" pill, and Edit Data lives in the
             Recipient Data card head — so this row stays empty there
-            and the stats card reads cleaner. */}
+            and the stats card reads cleaner.
+            Connect/import lives in the top banner's "Add New Sheet"
+            button (always visible), so we don't duplicate it here. */}
         {!sheetSource && (
           <div className="sheet-actions">
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => {
-                setImportMode('gsheet')
-                setAddOpen(true)
-                // Scroll the just-opened panel into view (it renders above
-                // this card, so we scroll up rather than down).
-                setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 50)
-              }}
-              disabled={generating || addOpen}
-              title="Connect a Google Sheet by URL"
-            ><span>🔗</span> Connect Google Sheet</button>
             <button
               type="button"
               className="btn btn-secondary"
