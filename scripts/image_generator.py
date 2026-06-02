@@ -311,50 +311,59 @@ def render(template_path, output_path, settings, name, address, phone):
 
     body_h = sum(body_font.getmetrics())
 
-    # ---- prepare text lines (final user-approved format) ----
+    # ---- prepare text lines (operator-approved 2-row format) ----
     #     Address: <address>            ← inline; label + value on one line
+    #     Contact: <name> <phone>       ← inline; name optionally bold
     #
-    #     Contact:                      ← label
-    #     <name>                        ← bold, same size
-    #     <phone>                       ← regular weight
+    # Each "line" carries a list of `segments`, where every segment is
+    # a (text, font, color) triple. The renderer measures the whole
+    # segment list as a single horizontal unit so a mixed-weight line
+    # (regular "Contact: ", bold name, regular phone) centres as one.
     max_text_w = img_w - 2 * pad_x
+
+    def _seg(text, font, color):
+        return {"text": text, "font": font, "color": color}
+
+    def _line_width(segs):
+        return sum(measure(s["text"], s["font"]) for s in segs)
 
     lines = []
 
-    def _addr_line(text, font):
-        return {"text": text, "font": font, "h": body_h,
-                "color": body_color, "block": "address"}
-
     # ---- Address block ----
     if address:
-        # Try to fit the whole "Address: <text>" on one centred line. When
-        # the address is too long we wrap to a second line; the label only
-        # appears on the first.
-        inline = f"Address: {address}"
-        if measure(inline, body_font) <= max_text_w:
-            lines.append(_addr_line(inline, body_font))
+        # Try to fit the whole "Address: <text>" on one centred line.
+        # When the address is too long we wrap onto continuation lines;
+        # the "Address:" label only appears on the first row.
+        inline_segs = [_seg(f"Address: {address}", body_font, body_color)]
+        if measure(inline_segs[0]["text"], body_font) <= max_text_w:
+            lines.append({"segments": inline_segs, "h": body_h, "block": "address"})
         else:
             wrapped = wrap_text(address, body_font, max_text_w) or [address]
             first = f"Address: {wrapped[0]}"
             if measure(first, body_font) > max_text_w:
-                lines.append(_addr_line("Address:", body_font))
+                lines.append({"segments": [_seg("Address:", body_font, body_color)],
+                              "h": body_h, "block": "address"})
                 for ln in wrapped:
-                    lines.append(_addr_line(ln, body_font))
+                    lines.append({"segments": [_seg(ln, body_font, body_color)],
+                                  "h": body_h, "block": "address"})
             else:
-                lines.append(_addr_line(first, body_font))
+                lines.append({"segments": [_seg(first, body_font, body_color)],
+                              "h": body_h, "block": "address"})
                 for ln in wrapped[1:]:
-                    lines.append(_addr_line(ln, body_font))
+                    lines.append({"segments": [_seg(ln, body_font, body_color)],
+                                  "h": body_h, "block": "address"})
 
-    # ---- Contact block ----
+    # ---- Contact block: ONE line, mixed weights ----
+    # Format: "Contact: <name> <phone>" where name may be Bold.
     if name or phone:
-        lines.append({"text": "Contact:", "font": body_font, "h": body_h,
-                      "color": body_color, "block": "contact"})
+        contact_segs = [_seg("Contact: ", body_font, body_color)]
         if name:
-            lines.append({"text": name, "font": name_font, "h": body_h,
-                          "color": name_color, "block": "contact"})
+            contact_segs.append(_seg(name, name_font, name_color))
+        if name and phone:
+            contact_segs.append(_seg(" ", body_font, body_color))
         if phone:
-            lines.append({"text": phone, "font": body_font, "h": body_h,
-                          "color": body_color, "block": "contact"})
+            contact_segs.append(_seg(phone, body_font, body_color))
+        lines.append({"segments": contact_segs, "h": body_h, "block": "contact"})
 
     # ---- vertical spacing rule ----
     # · section_gap between two different blocks (address → contact)
@@ -389,12 +398,17 @@ def render(template_path, output_path, settings, name, address, phone):
     draw = ImageDraw.Draw(canvas)
 
     # ---- render each line centred horizontally ----
+    # A line may have multiple segments (e.g. "Contact: " + bold name +
+    # " " + phone). We measure the whole segment list to find the line
+    # width, centre it as one unit, then walk segments left→right.
     y = text_origin_y
     for i, ln in enumerate(lines):
-        w = measure(ln["text"], ln["font"])
-        x = (img_w - w) // 2
-        draw.text((x, y), ln["text"], font=ln["font"],
-                  fill=hex_to_rgba(ln["color"]))
+        total_w = _line_width(ln["segments"])
+        x = (img_w - total_w) // 2
+        for seg in ln["segments"]:
+            draw.text((x, y), seg["text"], font=seg["font"],
+                      fill=hex_to_rgba(seg["color"]))
+            x += measure(seg["text"], seg["font"])
         y += ln["h"]
         if i < len(lines) - 1:
             y += _gap_between(ln, lines[i + 1])

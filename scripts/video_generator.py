@@ -126,16 +126,15 @@ B_CLOSE = r"{\b0}"
 
 def build_text_lines(name_line: str, address_lines: list[str], contact_line: str
                      ) -> list[str]:
-    """Assemble the user-approved labelled overlay block.
+    """Assemble the operator-approved 2-row overlay block.
 
     Final layout (mirrors the image renderer for unified branding):
 
         Address: <address line 1>
-                 <address line 2>     ← only when address wraps
-        (spacer)
-        Contact:
-        <name>                        ← bold, same size as everything else
-        <phone>
+                 <address line 2>          ← only when address wraps
+        Contact: <name> <phone>            ← name optionally bold
+
+    Compact, scannable, premium. No 4-line stack any more.
     """
     out: list[str] = []
     if address_lines:
@@ -147,17 +146,19 @@ def build_text_lines(name_line: str, address_lines: list[str], contact_line: str
         for cont in address_lines[1:]:
             out.append(f"{indent}{cont}")
 
-    out.append(SECTION_SPACER)
-    out.append("Contact:")
+    contact_parts: list[str] = []
     if name_line:
         # Name optionally gets weight emphasis (operator-toggleable via
         # personalisation-config.bold_name). Same size as everything else —
         # premium, balanced hierarchy.
         if BOLD_NAME:
-            out.append(f"{B_OPEN}{name_line}{B_CLOSE}")
+            contact_parts.append(f"{B_OPEN}{name_line}{B_CLOSE}")
         else:
-            out.append(name_line)
-    out.append(contact_line)
+            contact_parts.append(name_line)
+    if contact_line:
+        contact_parts.append(contact_line)
+    if contact_parts:
+        out.append("Contact: " + " ".join(contact_parts))
     return out
 
 

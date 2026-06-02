@@ -81,6 +81,10 @@ export default function PersonalisationPanel() {
   // requires a Bearer token (config.js injects it automatically).
   const [templateImageUrl, setTemplateImageUrl] = useState(null)
   const [templateVideoUrl, setTemplateVideoUrl] = useState(null)
+  // Surfaced to the preview card so the operator can see WHY a template
+  // failed to load (proxy issue / missing file / 401) — rather than the
+  // current silent placeholder.
+  const [templateError, setTemplateError] = useState({ image: null, video: null })
   // Live recipient data — the operator wants to see their REAL sheet
   // text in the preview, not a hardcoded mock. Falls back to a generic
   // sample when the sheet is empty.
@@ -119,13 +123,20 @@ export default function PersonalisationPanel() {
         try {
           const res = await fetch(`${API_BASE}/current-template?kind=${kind}`)
           if (!res.ok) {
-            console.warn(`[preview] /current-template?kind=${kind} → ${res.status}`)
+            const txt = await res.text().catch(() => '')
+            console.warn(`[preview] /current-template?kind=${kind} → ${res.status}`, txt)
+            if (!cancelled) {
+              setTemplateError((e) => ({ ...e, [kind]: `HTTP ${res.status}` }))
+            }
             continue
           }
           const data = await res.json().catch(() => ({}))
           const src = data?.data_uri || (data?.url ? `${API_BASE}${data.url}` : null)
           if (!src) {
             console.warn(`[preview] /current-template?kind=${kind} returned no usable source`, data)
+            if (!cancelled) {
+              setTemplateError((e) => ({ ...e, [kind]: 'no source in response' }))
+            }
             continue
           }
           if (cancelled) return
@@ -133,6 +144,9 @@ export default function PersonalisationPanel() {
           else setTemplateVideoUrl(src)
         } catch (e) {
           console.warn(`[preview] template fetch error (${kind}):`, e)
+          if (!cancelled) {
+            setTemplateError((s) => ({ ...s, [kind]: e.message || 'network error' }))
+          }
         }
       }
     })()
@@ -476,8 +490,10 @@ export default function PersonalisationPanel() {
           </p>
         </div>
         <div className="pstyle-preview-grid">
-          <PreviewCard kind="image" cfg={cfg} mediaUrl={templateImageUrl} data={previewData} />
-          <PreviewCard kind="video" cfg={cfg} mediaUrl={templateVideoUrl} data={previewData} />
+          <PreviewCard kind="image" cfg={cfg} mediaUrl={templateImageUrl}
+                       data={previewData} errorMsg={templateError.image} />
+          <PreviewCard kind="video" cfg={cfg} mediaUrl={templateVideoUrl}
+                       data={previewData} errorMsg={templateError.video} />
         </div>
       </aside>
       </div>
@@ -501,7 +517,7 @@ export default function PersonalisationPanel() {
  * feedback while dragging sliders. Aspect ratios match real outputs
  * (4:5 for image, 9:16 for video) so the proportions read correctly.
  */
-function PreviewCard({ kind, cfg, mediaUrl, data }) {
+function PreviewCard({ kind, cfg, mediaUrl, data, errorMsg }) {
   const isImage = kind === 'image'
   const preview = data || FALLBACK_PREVIEW
 
@@ -545,7 +561,9 @@ function PreviewCard({ kind, cfg, mediaUrl, data }) {
               : <video className="pstyle-preview-media" src={mediaUrl} muted autoPlay loop playsInline />)
           : (
             <div className="pstyle-preview-placeholder">
-              Template {isImage ? 'image' : 'video'} plays here
+              {errorMsg
+                ? <>Couldn't load template<br/><small style={{ opacity: 0.85 }}>{errorMsg}</small></>
+                : <>Template {isImage ? 'image' : 'video'} plays here</>}
             </div>
           )}
         <div
@@ -568,16 +586,11 @@ function PreviewCard({ kind, cfg, mediaUrl, data }) {
             <div className="pstyle-preview-line">
               Address: {preview.address}
             </div>
-            <div className="pstyle-preview-line pstyle-preview-line-label">
-              Contact:
-            </div>
-            <div
-              className="pstyle-preview-line"
-              style={{ fontWeight: cfg.bold_name ? 700 : 400 }}
-            >
-              {preview.name}
-            </div>
             <div className="pstyle-preview-line">
+              Contact:{' '}
+              <span style={{ fontWeight: cfg.bold_name ? 700 : 400 }}>
+                {preview.name}
+              </span>{' '}
               {preview.phone}
             </div>
           </div>
