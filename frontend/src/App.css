@@ -16283,7 +16283,7 @@ select.pstyle-input { cursor: pointer; }
 /* ---- Split layout: form left, sticky preview right ---- */
 .pstyle-split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) 280px;
   gap: 28px;
   align-items: flex-start;
   margin-top: 16px;
@@ -16329,13 +16329,20 @@ select.pstyle-input { cursor: pointer; }
   color: #8C7164;
 }
 .pstyle-preview-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: stretch;
 }
-@media (max-width: 480px) {
-  .pstyle-preview-grid { gap: 10px; }
+@media (max-width: 980px) {
+  /* On stacked layout (form on top, preview below) put the cards
+     side by side again — there's plenty of horizontal room. */
+  .pstyle-preview-grid {
+    flex-direction: row;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .pstyle-preview-grid .pstyle-preview-card { flex: 0 0 200px; }
 }
 
 .pstyle-preview-card {
@@ -16353,6 +16360,7 @@ select.pstyle-input { cursor: pointer; }
 .pstyle-preview-frame {
   position: relative;
   width: 100%;
+  max-width: 200px;
   background: linear-gradient(180deg, #C7C5BF 0%, #A8A6A0 100%);
   border-radius: 12px;
   overflow: hidden;
@@ -16360,9 +16368,9 @@ select.pstyle-input { cursor: pointer; }
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
 }
 /* Aspect ratios mirror real outputs but stay compact via the
-   fixed card width above (180px) so neither preview balloons
-   into a full-card-height monster on wide screens. */
-.pstyle-preview-frame-image { aspect-ratio: 4 / 5; }   /* 180×225 */
+   max-width cap above so neither preview balloons into a
+   full-column monster, especially the 9:16 video. */
+.pstyle-preview-frame-image { aspect-ratio: 4 / 5; }   /* 200×250 */
 .pstyle-preview-frame-video { aspect-ratio: 9 / 16; }  /* 180×320 */
 
 .pstyle-preview-placeholder {
