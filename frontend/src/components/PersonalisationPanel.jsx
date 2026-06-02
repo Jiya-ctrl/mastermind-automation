@@ -25,13 +25,14 @@ const COLOUR_PRESETS = [
   '#A855F7', '#7C3AED', '#EC4899', '#DB2777', '#FBCFE8', '#BFDBFE', '#BBF7D0', '#5E6F95',
 ]
 
-// Mock data used in the live preview cards — looks like a real
-// recipient so the operator can read the actual styling instead of
-// looking at lorem ipsum.
-const MOCK_PREVIEW = {
-  name:    'Jiya Bafna',
-  phone:   '9075105823',
-  address: 'Shreeji Valley, Indore',
+// Fallback preview data — used ONLY when the operator has no rows in
+// their connected sheet yet. As soon as /recipients returns at least
+// one row, we render that recipient's actual fields so the operator
+// sees the real text they're styling.
+const FALLBACK_PREVIEW = {
+  name:    'Sample Name',
+  phone:   '9999999999',
+  address: 'Sample Address, City',
 }
 
 // Curated font cascade — system-safe defaults so renders never fall
@@ -80,6 +81,10 @@ export default function PersonalisationPanel() {
   // requires a Bearer token (config.js injects it automatically).
   const [templateImageUrl, setTemplateImageUrl] = useState(null)
   const [templateVideoUrl, setTemplateVideoUrl] = useState(null)
+  // Live recipient data — the operator wants to see their REAL sheet
+  // text in the preview, not a hardcoded mock. Falls back to a generic
+  // sample when the sheet is empty.
+  const [previewData, setPreviewData] = useState(FALLBACK_PREVIEW)
 
   useEffect(() => {
     let cancelled = false
@@ -110,12 +115,21 @@ export default function PersonalisationPanel() {
     ;(async () => {
       for (const kind of ['image', 'video']) {
         try {
-          const res = await fetch(`${API_BASE}/current-template?kind=${kind}`)
-          if (!res.ok) continue
-          const data = await res.json().catch(() => ({}))
-          if (!data?.url) continue
+          const metaRes = await fetch(`${API_BASE}/current-template?kind=${kind}`)
+          if (!metaRes.ok) {
+            console.warn(`[preview] /current-template?kind=${kind} → ${metaRes.status}`)
+            continue
+          }
+          const data = await metaRes.json().catch(() => ({}))
+          if (!data?.url) {
+            console.warn(`[preview] /current-template?kind=${kind} returned no url`, data)
+            continue
+          }
           const blobRes = await fetch(`${API_BASE}${data.url}`)
-          if (!blobRes.ok) continue
+          if (!blobRes.ok) {
+            console.warn(`[preview] template blob fetch ${data.url} → ${blobRes.status}`)
+            continue
+          }
           const blob = await blobRes.blob()
           const url = URL.createObjectURL(blob)
           objectUrls.push(url)
@@ -125,9 +139,8 @@ export default function PersonalisationPanel() {
           }
           if (kind === 'image') setTemplateImageUrl(url)
           else setTemplateVideoUrl(url)
-        } catch {
-          // network error / missing template — preview keeps the
-          // placeholder so the panel is still usable.
+        } catch (e) {
+          console.warn(`[preview] template fetch error (${kind}):`, e)
         }
       }
     })()
@@ -135,6 +148,31 @@ export default function PersonalisationPanel() {
       cancelled = true
       objectUrls.forEach((u) => URL.revokeObjectURL(u))
     }
+  }, [])
+
+  // Pull the first connected recipient so the preview shows REAL
+  // sheet data (name / phone / address) instead of a hardcoded mock.
+  // The operator wanted to see what their actual rendered output will
+  // look like, not generic Lorem-style placeholder text.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/recipients`)
+        if (!res.ok) return
+        const data = await res.json().catch(() => ({}))
+        const first = Array.isArray(data?.items) ? data.items[0] : null
+        if (!first || cancelled) return
+        setPreviewData({
+          name:    (first.name    || '').trim() || FALLBACK_PREVIEW.name,
+          phone:   (first.phone   || '').trim() || FALLBACK_PREVIEW.phone,
+          address: (first.address || '').trim() || FALLBACK_PREVIEW.address,
+        })
+      } catch {
+        // Sheet not connected yet — keep the fallback preview data.
+      }
+    })()
+    return () => { cancelled = true }
   }, [])
 
   function set(k, v) {
@@ -449,8 +487,8 @@ export default function PersonalisationPanel() {
           </p>
         </div>
         <div className="pstyle-preview-grid">
-          <PreviewCard kind="image" cfg={cfg} mediaUrl={templateImageUrl} />
-          <PreviewCard kind="video" cfg={cfg} mediaUrl={templateVideoUrl} />
+          <PreviewCard kind="image" cfg={cfg} mediaUrl={templateImageUrl} data={previewData} />
+          <PreviewCard kind="video" cfg={cfg} mediaUrl={templateVideoUrl} data={previewData} />
         </div>
       </aside>
       </div>
@@ -474,8 +512,9 @@ export default function PersonalisationPanel() {
  * feedback while dragging sliders. Aspect ratios match real outputs
  * (4:5 for image, 9:16 for video) so the proportions read correctly.
  */
-function PreviewCard({ kind, cfg, mediaUrl }) {
+function PreviewCard({ kind, cfg, mediaUrl, data }) {
   const isImage = kind === 'image'
+  const preview = data || FALLBACK_PREVIEW
 
   // Strip background colour — derived from background_mode + strip_color.
   // 'on_template' renders without a coloured strip so the text floats on
@@ -538,7 +577,7 @@ function PreviewCard({ kind, cfg, mediaUrl }) {
             }}
           >
             <div className="pstyle-preview-line">
-              Address: {MOCK_PREVIEW.address}
+              Address: {preview.address}
             </div>
             <div className="pstyle-preview-line pstyle-preview-line-label">
               Contact:
@@ -547,10 +586,10 @@ function PreviewCard({ kind, cfg, mediaUrl }) {
               className="pstyle-preview-line"
               style={{ fontWeight: cfg.bold_name ? 700 : 400 }}
             >
-              {MOCK_PREVIEW.name}
+              {preview.name}
             </div>
             <div className="pstyle-preview-line">
-              {MOCK_PREVIEW.phone}
+              {preview.phone}
             </div>
           </div>
         </div>
