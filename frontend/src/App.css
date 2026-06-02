@@ -16390,6 +16390,17 @@ select.pstyle-input { cursor: pointer; }
       transparent 8px,
       transparent 16px);
 }
+/* Real uploaded template fills the entire preview frame; cover keeps
+   the template centred + cropped (rather than letterboxed) so the
+   personalisation overlay sits over a meaningful part of the asset. */
+.pstyle-preview-media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 .pstyle-preview-overlay-wrap {
   position: absolute;
   inset: 0;

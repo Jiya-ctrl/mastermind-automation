@@ -74,6 +74,12 @@ export default function PersonalisationPanel() {
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(null)
   const [toast, setToast]           = useState(null)
+  // Object URLs for the actual uploaded template image + video so the
+  // preview cards render the operator's real assets instead of a
+  // generic placeholder. Fetched as blobs because /files/templates/*
+  // requires a Bearer token (config.js injects it automatically).
+  const [templateImageUrl, setTemplateImageUrl] = useState(null)
+  const [templateVideoUrl, setTemplateVideoUrl] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -93,6 +99,42 @@ export default function PersonalisationPanel() {
       }
     })()
     return () => { cancelled = true }
+  }, [])
+
+  // Fetch the actual uploaded template files as blobs so we can render
+  // them in the preview cards. Skipped silently when either template
+  // is missing — preview falls back to the gray placeholder.
+  useEffect(() => {
+    const objectUrls = []
+    let cancelled = false
+    ;(async () => {
+      for (const kind of ['image', 'video']) {
+        try {
+          const res = await fetch(`${API_BASE}/current-template?kind=${kind}`)
+          if (!res.ok) continue
+          const data = await res.json().catch(() => ({}))
+          if (!data?.url) continue
+          const blobRes = await fetch(`${API_BASE}${data.url}`)
+          if (!blobRes.ok) continue
+          const blob = await blobRes.blob()
+          const url = URL.createObjectURL(blob)
+          objectUrls.push(url)
+          if (cancelled) {
+            URL.revokeObjectURL(url)
+            continue
+          }
+          if (kind === 'image') setTemplateImageUrl(url)
+          else setTemplateVideoUrl(url)
+        } catch {
+          // network error / missing template — preview keeps the
+          // placeholder so the panel is still usable.
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+      objectUrls.forEach((u) => URL.revokeObjectURL(u))
+    }
   }, [])
 
   function set(k, v) {
@@ -407,8 +449,8 @@ export default function PersonalisationPanel() {
           </p>
         </div>
         <div className="pstyle-preview-grid">
-          <PreviewCard kind="image" cfg={cfg} />
-          <PreviewCard kind="video" cfg={cfg} />
+          <PreviewCard kind="image" cfg={cfg} mediaUrl={templateImageUrl} />
+          <PreviewCard kind="video" cfg={cfg} mediaUrl={templateVideoUrl} />
         </div>
       </aside>
       </div>
@@ -432,31 +474,29 @@ export default function PersonalisationPanel() {
  * feedback while dragging sliders. Aspect ratios match real outputs
  * (4:5 for image, 9:16 for video) so the proportions read correctly.
  */
-function PreviewCard({ kind, cfg }) {
+function PreviewCard({ kind, cfg, mediaUrl }) {
   const isImage = kind === 'image'
 
   // Strip background colour — derived from background_mode + strip_color.
   // 'on_template' renders without a coloured strip so the text floats on
-  // the dark placeholder, matching production behaviour.
+  // the actual template media, matching production behaviour.
   const stripBg =
     cfg.background_mode === 'orange_strip' ? '#F97316' :
     cfg.background_mode === 'white_strip'  ? '#FFFFFF' :
     cfg.background_mode === 'custom_strip' ? cfg.strip_color :
     'transparent'
 
-  // Preview font size is scaled — preview cards are ~180px wide so we
+  // Preview font size is scaled — preview cards are ~200px wide so we
   // shrink the actual font_size aggressively but stay legible. A
   // linear scale (46→3px) would be unreadable, so we use a perceptual
   // size that still reacts to operator changes.
-  const previewFontPx = Math.max(8, Math.min(14, Math.round(cfg.font_size * 0.22)))
+  const previewFontPx = Math.max(7, Math.min(12, Math.round(cfg.font_size * 0.18)))
 
-  // Strip height as % of card height, only relevant when a strip mode
-  // is selected. on_template falls back to "auto" so the text-block
-  // sizes itself to its content.
-  const stripHeightStyle =
-    cfg.background_mode === 'on_template'
-      ? { height: 'auto', padding: '10px 14px' }
-      : { height: `${Math.round(cfg.strip_height_pct * 100)}%`, padding: '12px 14px' }
+  // Strip auto-sizes to its content in preview so the text never gets
+  // clipped — the real renderer applies strip_height_pct on the actual
+  // frame, but in this miniature preview we just let it grow as tall as
+  // the lines need.
+  const stripStyle = { padding: '10px 14px' }
 
   // Vertical alignment within the card — drives flexbox justify-content
   // on the wrapper so the overlay sits where the operator chose.
@@ -471,9 +511,15 @@ function PreviewCard({ kind, cfg }) {
         {isImage ? '📷 Image render' : '🎬 Video render (last 5.5s)'}
       </div>
       <div className={`pstyle-preview-frame pstyle-preview-frame-${kind}`}>
-        <div className="pstyle-preview-placeholder">
-          Template {isImage ? 'image' : 'video'} plays here
-        </div>
+        {mediaUrl
+          ? (isImage
+              ? <img className="pstyle-preview-media" src={mediaUrl} alt="Template" />
+              : <video className="pstyle-preview-media" src={mediaUrl} muted autoPlay loop playsInline />)
+          : (
+            <div className="pstyle-preview-placeholder">
+              Template {isImage ? 'image' : 'video'} plays here
+            </div>
+          )}
         <div
           className="pstyle-preview-overlay-wrap"
           style={{ justifyContent: justify }}
@@ -481,7 +527,7 @@ function PreviewCard({ kind, cfg }) {
           <div
             className="pstyle-preview-overlay"
             style={{
-              ...stripHeightStyle,
+              ...stripStyle,
               background:  stripBg,
               color:       cfg.font_color,
               fontFamily:  `'${cfg.font_family}', system-ui, sans-serif`,
