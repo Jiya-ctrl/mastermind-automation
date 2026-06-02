@@ -8,14 +8,21 @@ const TABS = [
   { key: 'position',   label: '📐 Position' },
 ]
 
-// A handful of "quick-pick" basics — kept tiny on purpose. The
-// operator gets the full spectrum via the native picker (which opens
-// the OS hue/saturation gradient) and the hex input handles any
-// custom value. The presets are just a one-tap shortcut for the
-// brand colours we use most often.
+// Full operator palette — laid out Paint-style as a tight 8-column
+// grid. Covers every brand scenario in one glance so the operator
+// rarely needs the native gradient picker (which is still available
+// for true-custom values via the picker chip + hex input).
 const COLOUR_PRESETS = [
-  '#FFFFFF', '#000000', '#0B1C30', '#5E6F95',
-  '#F97316', '#FFFFFF', '#FFF1DC', '#DC2626',
+  // Row 1 — Neutrals (light → dark)
+  '#FFFFFF', '#F3F4F6', '#E5E7EB', '#D1D5DB', '#9CA3AF', '#6B7280', '#374151', '#000000',
+  // Row 2 — Brand orange / warm browns
+  '#FFF1DC', '#FED7AA', '#FDBA74', '#FB923C', '#F97316', '#EA580C', '#9A3412', '#5E2A0F',
+  // Row 3 — Reds / pinks / yellows
+  '#FECACA', '#F87171', '#EF4444', '#DC2626', '#FCD34D', '#F59E0B', '#FB7185', '#E11D48',
+  // Row 4 — Cool greens / teals / blues / purples
+  '#86EFAC', '#10B981', '#047857', '#14B8A6', '#60A5FA', '#3B82F6', '#1D4ED8', '#0B1C30',
+  // Row 5 — Magentas / violets / pastel accents
+  '#A855F7', '#7C3AED', '#EC4899', '#DB2777', '#FBCFE8', '#BFDBFE', '#BBF7D0', '#5E6F95',
 ]
 
 // Mock data used in the live preview cards — looks like a real
@@ -219,6 +226,7 @@ export default function PersonalisationPanel() {
         ))}
       </div>
 
+      <div className="pstyle-split">
       <div className="pstyle-body">
         {activeTab === 'text' && (
           <div className="pstyle-grid">
@@ -388,21 +396,21 @@ export default function PersonalisationPanel() {
       </div>
 
       {/* Live preview — updates in real time as the operator edits. Two
-          mock cards (image + video) so the styling is judged in the
-          same context it'll render. Pure CSS preview — no backend hit
-          per keystroke. */}
-      <div className="pstyle-preview-section">
+          mock cards (image + video) sit in the right column so the
+          operator can see styling changes WITHOUT scrolling. Sticky
+          so the preview follows the operator down through the form. */}
+      <aside className="pstyle-preview-section">
         <div className="pstyle-preview-head">
           <h3>🔍 Live preview</h3>
           <p className="pstyle-preview-sub">
-            Updates as you edit. Real renders will use your actual template
-            in place of the gray placeholder.
+            Updates as you edit.
           </p>
         </div>
         <div className="pstyle-preview-grid">
           <PreviewCard kind="image" cfg={cfg} />
           <PreviewCard kind="video" cfg={cfg} />
         </div>
+      </aside>
       </div>
 
       {error && <div className="pstyle-error">⚠ {error}</div>}

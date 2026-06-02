@@ -16218,19 +16218,20 @@ select.pstyle-input { cursor: pointer; }
   cursor: pointer;
 }
 .pstyle-color-presets-compact {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 5px;
+  margin-top: 8px;
+  width: 100%;
+  max-width: 280px;
 }
 .pstyle-color-preset {
-  width: 22px;
-  height: 22px;
+  aspect-ratio: 1 / 1;
+  width: 100%;
   border-radius: 5px;
   border: 1.5px solid rgba(15, 23, 42, 0.10);
   cursor: pointer;
   padding: 0;
-  flex: 0 0 auto;
   transition: transform 140ms, border-color 140ms, box-shadow 140ms;
 }
 .pstyle-color-preset:hover { transform: scale(1.15); border-color: rgba(15, 23, 42, 0.35); }
@@ -16279,11 +16280,39 @@ select.pstyle-input { cursor: pointer; }
 }
 [data-theme="dark"] .pstyle-color-picker-hint { color: #847A6F; }
 
+/* ---- Split layout: form left, sticky preview right ---- */
+.pstyle-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 28px;
+  align-items: flex-start;
+  margin-top: 16px;
+}
+@media (max-width: 980px) {
+  .pstyle-split {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+}
+
 /* ---- Live preview section ---- */
 .pstyle-preview-section {
-  margin-top: 22px;
-  padding-top: 20px;
-  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  position: sticky;
+  top: 96px;
+  align-self: flex-start;
+  padding: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 14px;
+  background: #FAFAF6;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.04);
+}
+[data-theme="dark"] .pstyle-preview-section {
+  background: #1D1917;
+  border-color: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+@media (max-width: 980px) {
+  .pstyle-preview-section { position: static; }
 }
 .pstyle-preview-head h3 {
   margin: 0 0 4px 0;
@@ -16302,12 +16331,11 @@ select.pstyle-input { cursor: pointer; }
 .pstyle-preview-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 12px;
   align-items: flex-start;
-  max-width: 420px;
 }
 @media (max-width: 480px) {
-  .pstyle-preview-grid { gap: 10px; max-width: 100%; }
+  .pstyle-preview-grid { gap: 10px; }
 }
 
 .pstyle-preview-card {
