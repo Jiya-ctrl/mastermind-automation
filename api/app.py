@@ -2442,6 +2442,9 @@ _SEND_GAP_S = _SEND_GAP_DEFAULT_S    # legacy alias for log lines
 _SEND_GAP_MAX_S = 600.0              # 10-minute ceiling (sanity)
 
 def _delivery_settings_path():
+    # Persisted operator overrides for the delivery worker (send gap,
+    # future per-provider tweaks). Lives in data/ which is bind-mounted
+    # in production so the file survives container rebuilds.
     return os.path.join(PROJECT_ROOT, "data", "delivery-settings.json")
 
 def _read_delivery_settings():
