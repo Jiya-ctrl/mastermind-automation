@@ -1039,17 +1039,27 @@ export default function Sheets() {
                 {sheetSource.status === 'error' && (
                   <> · <span style={{ color: '#B91C1C' }}>error: {sheetSource.lastError || 'unknown'}</span></>
                 )}
-                {' · '}
-                <a href={sheetSource.url} target="_blank" rel="noreferrer">open in Google Sheets ↗</a>
               </p>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
                 type="button"
                 className="btn btn-secondary"
+                onClick={openSheet}
+                disabled={items.length === 0}
+                title="Open the connected Google Sheet in a new tab"
+              ><span>↗</span> Open Sheet</button>
+              <button
+                type="button"
+                className={`btn btn-secondary${syncing ? ' is-busy' : ''}`}
                 onClick={syncGoogleSheet}
                 disabled={syncing || generating}
-              >🔄 {syncing ? 'Syncing…' : 'Sync now'}</button>
+                title="Re-fetch the connected Google Sheet"
+              >
+                <span className={`sheets-refresh-icon${syncing ? ' sheets-refresh-spinning' : ''}`}>🔄</span>
+                {' '}
+                {syncing ? 'Syncing…' : 'Sync now'}
+              </button>
               <button
                 type="button"
                 className="btn btn-ghost"
@@ -1092,66 +1102,33 @@ export default function Sheets() {
           </div>
         </div>
 
-        <div className="sheet-actions">
-          {/* Label is route-dependent: when a Google Sheet is connected the
-              button opens the live sheet in a new tab; otherwise it
-              downloads the local recipients as CSV (the real behavior). */}
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={openSheet}
-            disabled={items.length === 0}
-            title={sheetSource ? 'Open the connected Google Sheet in a new tab' : 'Download recipients as CSV'}
-          >
-            {sheetSource
-              ? <><span>↗</span> Open Sheet</>
-              : <><span>↓</span> Download Sheet</>}
-          </button>
-          {!editMode ? (
+        {/* Bottom actions: only when NO Google Sheet is connected. With a
+            sheet attached, Open Sheet + Sync now live in the top
+            "Google Sheet connected" pill, and Edit Data lives in the
+            Recipient Data card head — so this row stays empty there
+            and the stats card reads cleaner. */}
+        {!sheetSource && (
+          <div className="sheet-actions">
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={startEdit}
-              disabled={generating || addOpen}
-            ><span>✏️</span> Edit Data</button>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={saveEdit}
-                disabled={savingBulk}
-              >✓ Save changes ({buffer.length} rows)</button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={cancelEdit}
-                disabled={savingBulk}
-              >Cancel</button>
-            </>
-          )}
-          {/* Refresh / Sync — wording + behaviour match the actual flow:
-                * connected Google Sheet → real network sync (syncing state)
-                * otherwise → local re-fetch of recipients.json (refreshing state)
-              Each path has its own spinner so the click is always felt. */}
-          <button
-            type="button"
-            className={`btn btn-secondary${(syncing || refreshing) ? ' is-busy' : ''}`}
-            onClick={() => sheetSource ? syncGoogleSheet() : refreshData()}
-            disabled={generating || syncing || refreshing}
-            title={sheetSource
-              ? 'Re-fetch the connected Google Sheet'
-              : 'Re-read recipients.json from disk'}
-          >
-            <span className={`sheets-refresh-icon${(syncing || refreshing) ? ' sheets-refresh-spinning' : ''}`}>🔄</span>
-            {' '}
-            {syncing
-              ? 'Syncing…'
-              : refreshing
-                ? 'Refreshing…'
-                : (sheetSource ? 'Sync from Google' : 'Refresh Data')}
-          </button>
-        </div>
+              onClick={openSheet}
+              disabled={items.length === 0}
+              title="Download recipients as CSV"
+            ><span>↓</span> Download Sheet</button>
+            <button
+              type="button"
+              className={`btn btn-secondary${refreshing ? ' is-busy' : ''}`}
+              onClick={refreshData}
+              disabled={generating || refreshing}
+              title="Re-read recipients.json from disk"
+            >
+              <span className={`sheets-refresh-icon${refreshing ? ' sheets-refresh-spinning' : ''}`}>🔄</span>
+              {' '}
+              {refreshing ? 'Refreshing…' : 'Refresh Data'}
+            </button>
+          </div>
+        )}
       </section>
 
       {/* ---------- Recipient table ---------- */}
@@ -1164,14 +1141,40 @@ export default function Sheets() {
               {editMode ? ' (edit mode)' : ''}.
             </p>
           </div>
-          <div className="search search-inline">
-            <span aria-hidden="true">🔍</span>
-            <input
-              type="text"
-              placeholder="Search name, phone or address…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+          <div className="sheets-recipient-head-actions">
+            <div className="search search-inline">
+              <span aria-hidden="true">🔍</span>
+              <input
+                type="text"
+                placeholder="Search name, phone or address…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+            {!editMode ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={startEdit}
+                disabled={generating || addOpen}
+                title="Edit recipient rows inline"
+              ><span>✏️</span> Edit Data</button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={saveEdit}
+                  disabled={savingBulk}
+                >✓ Save changes ({buffer.length} rows)</button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={cancelEdit}
+                  disabled={savingBulk}
+                >Cancel</button>
+              </>
+            )}
           </div>
         </div>
 
