@@ -1963,10 +1963,10 @@ def delivery_status():
         "counts":         counts,
         "items":          merged,
         "worker":         _worker_status(),
-        # Bumped to 2 when each (stem, kind) became its own row. Frontend
-        # surfaces this in the page header so we can verify the deploy
-        # actually shipped without spelunking through container logs.
-        "schema_version": 2,
+        # Bumped to 2 when each (stem, kind) became its own row. v3 added
+        # the recipient-table fallback so pending rows (no delivery yet)
+        # show the real name/phone instead of the raw stem.
+        "schema_version": 3,
     })
 
 
@@ -4359,6 +4359,18 @@ def _materialise_delivery_view():
     with _DELIVERIES_LOCK:
         doc = _load_deliveries()
 
+    # Reverse index: stem -> recipient. Lets us fill in name/phone on
+    # rows that don't yet have a delivery record (e.g. the operator just
+    # generated an image but hasn't hit Send Media yet — the row should
+    # still display the correct recipient instead of the raw stem).
+    with _RECIPIENTS_LOCK:
+        rdoc = _load_recipients()
+    recipient_by_stem = {}
+    for r in rdoc["items"]:
+        s = _sanitize_stem(r.get("address", ""))
+        if s and s not in recipient_by_stem:
+            recipient_by_stem[s] = r
+
     # Map: (stem, kind) -> most-recently-updated delivery for that pair.
     # Legacy rows with no media_kind fall back to a single 'unknown' bucket
     # so they still surface — but new deliveries are always tagged with a
@@ -4416,13 +4428,25 @@ def _materialise_delivery_view():
                 ("video" if kind == "image" else "image"): None,
                 "status":            "Queued",   # default fs-only status
             }
+            # Fill recipient identity from the recipients table when the
+            # row has no delivery yet — otherwise the UI shows the raw
+            # stem and an empty phone, which looks broken.
+            rec = recipient_by_stem.get(it["id"])
+            if rec:
+                base["recipient_id"]      = rec.get("id")
+                base["recipient_name"]    = rec.get("name")
+                base["recipient_phone"]   = rec.get("phone")
+                base["recipient_address"] = rec.get("address")
             if dlv:
                 base.update({
                     "status":              dlv["status"],
-                    "recipient_id":        dlv.get("recipient_id"),
-                    "recipient_name":      dlv.get("recipient_name"),
-                    "recipient_phone":     dlv.get("recipient_phone"),
-                    "recipient_address":   dlv.get("recipient_address"),
+                    # Delivery row's recipient fields override the
+                    # recipient-table snapshot above so any later edits
+                    # to the row (e.g. corrected phone) win.
+                    "recipient_id":        dlv.get("recipient_id") or base.get("recipient_id"),
+                    "recipient_name":      dlv.get("recipient_name") or base.get("recipient_name"),
+                    "recipient_phone":     dlv.get("recipient_phone") or base.get("recipient_phone"),
+                    "recipient_address":   dlv.get("recipient_address") or base.get("recipient_address"),
                     "delivery_id":         dlv.get("id"),
                     "attempts":            dlv.get("attempts", 0),
                     "max_attempts":        dlv.get("max_attempts", _MAX_ATTEMPTS),
