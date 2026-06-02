@@ -8,14 +8,19 @@ const TABS = [
   { key: 'position',   label: '📐 Position' },
 ]
 
-// Curated 16-colour palette — brand orange + warm neutrals + a few
-// accent colours covering most real-world contact-card scenarios.
-// Operator can still pick anything via the color input above.
+// Comprehensive 32-colour palette — 4 rows × 8 cols, covering every
+// common contact-card scenario: neutrals, brand-orange family, warm
+// accents, cool accents. Operator can still pick any custom colour
+// via the native colour input or hex field.
 const COLOUR_PRESETS = [
-  '#0B1C30', '#1F2937', '#475569', '#000000',  // dark navy / charcoal / slate / black
-  '#FFFFFF', '#FFF1DC', '#F1ECE2', '#E5E7EB',  // white / cream / off-white / light gray
-  '#F97316', '#FB923C', '#EA580C', '#B45309',  // brand orange family
-  '#DC2626', '#10B981', '#3B82F6', '#F59E0B',  // accent (red/green/blue/gold)
+  // Row 1 — Neutrals (light → dark)
+  '#FFFFFF', '#FAFAFA', '#FFF1DC', '#E5E7EB', '#9CA3AF', '#4B5563', '#0B1C30', '#000000',
+  // Row 2 — Brand orange family
+  '#FED7AA', '#FDBA74', '#FB923C', '#F97316', '#EA580C', '#C2410C', '#9A3412', '#7C2D12',
+  // Row 3 — Warm accents (red / amber / gold)
+  '#FECACA', '#FCA5A5', '#EF4444', '#DC2626', '#FCD34D', '#F59E0B', '#B45309', '#92400E',
+  // Row 4 — Cool accents (green / teal / blue / purple)
+  '#86EFAC', '#10B981', '#047857', '#14B8A6', '#3B82F6', '#1D4ED8', '#A855F7', '#EC4899',
 ]
 
 // Mock data used in the live preview cards — looks like a real
@@ -436,10 +441,11 @@ function PreviewCard({ kind, cfg }) {
     cfg.background_mode === 'custom_strip' ? cfg.strip_color :
     'transparent'
 
-  // Preview font size is scaled — real videos are 1920px tall, the
-  // preview is ~260px. A linear scale (46→6px) would be unreadable, so
-  // we use a perceptual size that stays legible but reacts to changes.
-  const previewFontPx = Math.max(10, Math.min(22, Math.round(cfg.font_size * 0.34)))
+  // Preview font size is scaled — preview cards are ~180px wide so we
+  // shrink the actual font_size aggressively but stay legible. A
+  // linear scale (46→3px) would be unreadable, so we use a perceptual
+  // size that still reacts to operator changes.
+  const previewFontPx = Math.max(8, Math.min(14, Math.round(cfg.font_size * 0.22)))
 
   // Strip height as % of card height, only relevant when a strip mode
   // is selected. on_template falls back to "auto" so the text-block

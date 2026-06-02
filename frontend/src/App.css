@@ -16219,28 +16219,34 @@ select.pstyle-input { cursor: pointer; }
 }
 .pstyle-color-presets {
   display: grid;
-  grid-template-columns: repeat(8, 22px);
-  gap: 6px;
-  margin-top: 4px;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 5px;
+  margin-top: 8px;
   width: 100%;
+  max-width: 320px;
 }
 .pstyle-color-preset {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  border-radius: 5px;
   border: 1.5px solid rgba(15, 23, 42, 0.10);
   cursor: pointer;
   padding: 0;
   transition: transform 140ms, border-color 140ms, box-shadow 140ms;
 }
-.pstyle-color-preset:hover { transform: scale(1.10); border-color: rgba(15, 23, 42, 0.24); }
+.pstyle-color-preset:hover { transform: scale(1.12); border-color: rgba(15, 23, 42, 0.30); }
 .pstyle-color-preset-active {
   border-color: #F97316;
-  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.28);
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.30);
+  transform: scale(1.05);
 }
 /* Allow the preset grid to wrap onto its own row under the picker+hex
-   inputs so all 16 swatches stay visible at narrower widths. */
+   inputs so all 32 swatches stay visible at narrower widths. */
 .pstyle-color { flex-wrap: wrap; }
+.pstyle-color-picker {
+  width: 44px;
+  height: 38px;
+}
 
 /* ---- Live preview section ---- */
 .pstyle-preview-section {
@@ -16263,18 +16269,21 @@ select.pstyle-input { cursor: pointer; }
   color: #8C7164;
 }
 .pstyle-preview-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  flex-wrap: wrap;
 }
 @media (max-width: 720px) {
-  .pstyle-preview-grid { grid-template-columns: 1fr; }
+  .pstyle-preview-grid { gap: 14px; }
 }
 
 .pstyle-preview-card {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 0 0 auto;
+  width: 180px;
 }
 .pstyle-preview-card-label {
   font-size: 12.5px;
@@ -16291,9 +16300,11 @@ select.pstyle-input { cursor: pointer; }
   border: 1px solid rgba(15, 23, 42, 0.08);
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
 }
-/* Aspect ratios mirror real outputs */
-.pstyle-preview-frame-image { aspect-ratio: 4 / 5; }
-.pstyle-preview-frame-video { aspect-ratio: 9 / 16; }
+/* Aspect ratios mirror real outputs but stay compact via the
+   fixed card width above (180px) so neither preview balloons
+   into a full-card-height monster on wide screens. */
+.pstyle-preview-frame-image { aspect-ratio: 4 / 5; }   /* 180×225 */
+.pstyle-preview-frame-video { aspect-ratio: 9 / 16; }  /* 180×320 */
 
 .pstyle-preview-placeholder {
   position: absolute;
