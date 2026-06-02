@@ -8,19 +8,14 @@ const TABS = [
   { key: 'position',   label: '📐 Position' },
 ]
 
-// Comprehensive 32-colour palette — 4 rows × 8 cols, covering every
-// common contact-card scenario: neutrals, brand-orange family, warm
-// accents, cool accents. Operator can still pick any custom colour
-// via the native colour input or hex field.
+// A handful of "quick-pick" basics — kept tiny on purpose. The
+// operator gets the full spectrum via the native picker (which opens
+// the OS hue/saturation gradient) and the hex input handles any
+// custom value. The presets are just a one-tap shortcut for the
+// brand colours we use most often.
 const COLOUR_PRESETS = [
-  // Row 1 — Neutrals (light → dark)
-  '#FFFFFF', '#FAFAFA', '#FFF1DC', '#E5E7EB', '#9CA3AF', '#4B5563', '#0B1C30', '#000000',
-  // Row 2 — Brand orange family
-  '#FED7AA', '#FDBA74', '#FB923C', '#F97316', '#EA580C', '#C2410C', '#9A3412', '#7C2D12',
-  // Row 3 — Warm accents (red / amber / gold)
-  '#FECACA', '#FCA5A5', '#EF4444', '#DC2626', '#FCD34D', '#F59E0B', '#B45309', '#92400E',
-  // Row 4 — Cool accents (green / teal / blue / purple)
-  '#86EFAC', '#10B981', '#047857', '#14B8A6', '#3B82F6', '#1D4ED8', '#A855F7', '#EC4899',
+  '#FFFFFF', '#000000', '#0B1C30', '#5E6F95',
+  '#F97316', '#FFFFFF', '#FFF1DC', '#DC2626',
 ]
 
 // Mock data used in the live preview cards — looks like a real
@@ -542,13 +537,16 @@ function Toggle({ value, onChange }) {
 function ColorField({ value, onChange, presets }) {
   return (
     <div className="pstyle-color">
-      <input
-        type="color"
-        value={value}
-        onChange={(e) => onChange(e.target.value.toUpperCase())}
-        className="pstyle-color-picker"
-        aria-label="Pick a colour"
-      />
+      <label className="pstyle-color-picker-wrap" title="Open full colour picker (gradient + RGB)">
+        <input
+          type="color"
+          value={value}
+          onChange={(e) => onChange(e.target.value.toUpperCase())}
+          className="pstyle-color-picker"
+          aria-label="Pick a colour"
+        />
+        <span className="pstyle-color-picker-hint">Click to open full picker</span>
+      </label>
       <input
         type="text"
         value={value}
@@ -557,10 +555,10 @@ function ColorField({ value, onChange, presets }) {
         spellCheck="false"
         maxLength={7}
       />
-      <div className="pstyle-color-presets">
-        {presets.map((p) => (
+      <div className="pstyle-color-presets pstyle-color-presets-compact">
+        {presets.map((p, idx) => (
           <button
-            key={p}
+            key={`${p}-${idx}`}
             type="button"
             className={`pstyle-color-preset${p.toUpperCase() === value.toUpperCase() ? ' pstyle-color-preset-active' : ''}`}
             style={{ background: p }}

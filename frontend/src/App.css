@@ -16217,36 +16217,67 @@ select.pstyle-input { cursor: pointer; }
   border-radius: 8px;
   cursor: pointer;
 }
-.pstyle-color-presets {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 5px;
-  margin-top: 8px;
-  width: 100%;
-  max-width: 320px;
+.pstyle-color-presets-compact {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 .pstyle-color-preset {
-  aspect-ratio: 1 / 1;
-  width: 100%;
+  width: 22px;
+  height: 22px;
   border-radius: 5px;
   border: 1.5px solid rgba(15, 23, 42, 0.10);
   cursor: pointer;
   padding: 0;
+  flex: 0 0 auto;
   transition: transform 140ms, border-color 140ms, box-shadow 140ms;
 }
-.pstyle-color-preset:hover { transform: scale(1.12); border-color: rgba(15, 23, 42, 0.30); }
+.pstyle-color-preset:hover { transform: scale(1.15); border-color: rgba(15, 23, 42, 0.35); }
 .pstyle-color-preset-active {
   border-color: #F97316;
   box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.30);
-  transform: scale(1.05);
+  transform: scale(1.10);
 }
-/* Allow the preset grid to wrap onto its own row under the picker+hex
-   inputs so all 32 swatches stay visible at narrower widths. */
-.pstyle-color { flex-wrap: wrap; }
+/* The native picker becomes the centrepiece — a wide colourful chip
+   that opens the OS gradient/HSL picker on click. Hex input sits
+   beside it; quick-pick swatches wrap below. */
+.pstyle-color-picker-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  border-radius: 10px;
+  cursor: pointer;
+  background: #FFFFFF;
+  transition: border-color 140ms, box-shadow 140ms;
+}
+.pstyle-color-picker-wrap:hover {
+  border-color: rgba(249, 115, 22, 0.45);
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.10);
+}
 .pstyle-color-picker {
-  width: 44px;
-  height: 38px;
+  width: 56px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
 }
+.pstyle-color-picker::-webkit-color-swatch-wrapper { padding: 0; }
+.pstyle-color-picker::-webkit-color-swatch { border: none; border-radius: 6px; }
+.pstyle-color-picker-hint {
+  font-size: 11.5px;
+  color: #8C7164;
+  font-weight: 500;
+}
+[data-theme="dark"] .pstyle-color-picker-wrap {
+  background: #211D1A;
+  border-color: rgba(255, 255, 255, 0.10);
+}
+[data-theme="dark"] .pstyle-color-picker-hint { color: #847A6F; }
 
 /* ---- Live preview section ---- */
 .pstyle-preview-section {
@@ -16269,21 +16300,21 @@ select.pstyle-input { cursor: pointer; }
   color: #8C7164;
 }
 .pstyle-preview-grid {
-  display: flex;
-  gap: 18px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
   align-items: flex-start;
-  flex-wrap: wrap;
+  max-width: 420px;
 }
-@media (max-width: 720px) {
-  .pstyle-preview-grid { gap: 14px; }
+@media (max-width: 480px) {
+  .pstyle-preview-grid { gap: 10px; max-width: 100%; }
 }
 
 .pstyle-preview-card {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 0 0 auto;
-  width: 180px;
+  min-width: 0;
 }
 .pstyle-preview-card-label {
   font-size: 12.5px;

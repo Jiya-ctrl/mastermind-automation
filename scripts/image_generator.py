@@ -42,7 +42,40 @@ from PIL import Image, ImageDraw, ImageFont
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 CONFIG_PATH  = os.path.join(PROJECT_ROOT, "config", "settings.json")
+PERSONALISATION_CONFIG_PATH = os.path.join(PROJECT_ROOT, "data", "personalisation-config.json")
 OUTPUT_DIR   = os.path.join(PROJECT_ROOT, "output", "images")
+
+
+def load_personalisation_config():
+    """Operator-tunable style (font / colour / background / position),
+    written by the API's /personalisation-config endpoint and shared
+    with the video generator. Returns a fully-populated dict — missing
+    keys are filled from defaults so the renderer never crashes when
+    the operator has never opened the Style panel."""
+    defaults = {
+        "font_family":      "DejaVu Sans",
+        "font_size":        46,
+        "font_color":       "#0B1C30",
+        "bold_name":        True,
+        "shadow_opacity":   0.45,
+        "background_mode":  "on_template",
+        "strip_color":      "#F97316",
+        "strip_height_pct": 0.24,
+        "position":         "bottom",
+        "margin_pct":       0.05,
+    }
+    if not os.path.isfile(PERSONALISATION_CONFIG_PATH):
+        return defaults
+    try:
+        with open(PERSONALISATION_CONFIG_PATH, "r", encoding="utf-8") as f:
+            persisted = json.load(f)
+        if isinstance(persisted, dict):
+            for k in defaults:
+                if k in persisted:
+                    defaults[k] = persisted[k]
+    except Exception:
+        pass
+    return defaults
 
 # Font cascade — Bahnschrift first (variable, ships on Win10+), Segoe as
 # a static fallback. Linux production containers often do not have these
@@ -59,6 +92,59 @@ FONT_SEMIBOLD = [
     ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", None),
     ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", None),
 ]
+
+# Font-family resolver — maps the operator's chosen font_family string
+# (from the Style panel) to platform-specific font files. We provide a
+# few common families; everything else falls back to the safe defaults
+# above so the renderer never breaks on a missing font.
+_FAMILY_BOLD = {
+    "DejaVu Sans": [
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", None),
+        (r"C:\Windows\Fonts\arialbd.ttf", None),
+    ],
+    "Roboto": [
+        ("/usr/share/fonts/truetype/roboto/Roboto-Bold.ttf", None),
+        (r"C:\Windows\Fonts\arialbd.ttf", None),
+    ],
+    "Open Sans": [
+        ("/usr/share/fonts/truetype/open-sans/OpenSans-Bold.ttf", None),
+        (r"C:\Windows\Fonts\arialbd.ttf", None),
+    ],
+    "Liberation Sans": [
+        ("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", None),
+    ],
+    "Inter": [
+        ("/usr/share/fonts/truetype/inter/Inter-Bold.ttf", None),
+    ],
+}
+_FAMILY_REGULAR = {
+    "DejaVu Sans": [
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", None),
+        (r"C:\Windows\Fonts\arial.ttf", None),
+    ],
+    "Roboto": [
+        ("/usr/share/fonts/truetype/roboto/Roboto-Regular.ttf", None),
+        (r"C:\Windows\Fonts\arial.ttf", None),
+    ],
+    "Open Sans": [
+        ("/usr/share/fonts/truetype/open-sans/OpenSans-Regular.ttf", None),
+        (r"C:\Windows\Fonts\arial.ttf", None),
+    ],
+    "Liberation Sans": [
+        ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", None),
+    ],
+    "Inter": [
+        ("/usr/share/fonts/truetype/inter/Inter-Regular.ttf", None),
+    ],
+}
+
+
+def font_cascade(family, weight):
+    """Return the font-file cascade for the given family + weight,
+    with the global safe fallbacks appended so we always find something."""
+    base = (_FAMILY_BOLD if weight == "bold" else _FAMILY_REGULAR).get(family, [])
+    fallback = FONT_BOLD if weight == "bold" else FONT_SEMIBOLD
+    return base + fallback
 
 
 # ---------------------------------------------------------------------------
@@ -141,20 +227,57 @@ def render(template_path, output_path, settings, name, address, phone):
     """
     cfg = settings.get("image_overlay", {})
 
+    # Operator-tunable personalisation — overrides settings.json defaults
+    # whenever the Style panel has been edited.  Falls back to the
+    # baked-in palette/strip when no overrides are persisted yet.
+    pcfg = load_personalisation_config()
+
     base = Image.open(template_path).convert("RGB")
     img_w, img_h = base.size
 
     # ---- palette ----
-    strip_bg    = cfg.get("strip_color", "#F97316")   # brand orange
-    name_color  = cfg.get("name_color",  "#FFFFFF")   # bright white
-    body_color  = cfg.get("body_color",  "#FFF1DC")   # warm cream
+    # Background mode decides whether we paint a coloured strip below the
+    # template (orange / white / custom) or skip the strip entirely and
+    # render the text directly on the template's own area.
+    bg_mode = pcfg.get("background_mode", "on_template")
+    mode_to_strip_hex = {
+        "orange_strip": "#F97316",
+        "white_strip":  "#FFFFFF",
+        "custom_strip": pcfg.get("strip_color", "#F97316"),
+    }
+    if bg_mode in mode_to_strip_hex:
+        strip_bg = mode_to_strip_hex[bg_mode]
+        draw_on_template = False
+    elif bg_mode == "on_template":
+        strip_bg = cfg.get("strip_color", "#F97316")  # unused when drawing on template
+        draw_on_template = True
+    else:
+        strip_bg = cfg.get("strip_color", "#F97316")
+        draw_on_template = False
+
+    # Single body/name colour driven by the Style panel.  When painting
+    # on a strip, the operator's chosen colour is used as-is.  When
+    # painting directly on the template, the same colour applies — the
+    # operator picks one that contrasts with their template.
+    body_color = pcfg.get("font_color", cfg.get("body_color", "#FFF1DC"))
+    name_color = body_color
+
+    # Font family — comes from the Style panel; we resolve to a real
+    # font file via the cascade defined at module scope.
+    font_family = pcfg.get("font_family", "DejaVu Sans")
 
     # ---- responsive sizing (scaled to image width) ----
     # One size for everything. The visual hierarchy is weight-based:
     # SemiBold for the address / labels / phone, true Bold for the name.
-    # No giant hero text — the template stays the headline.
-    body_size      = cfg.get("body_size",
-                             max(14, int(img_w * 0.034)))
+    # The operator's font_size acts as a base — we still scale to image
+    # width so large templates get readable output and small ones don't
+    # blow out the strip.
+    base_pt = int(pcfg.get("font_size", 46))
+    derived = max(14, int(img_w * 0.034))
+    # Take whichever is larger so the operator's choice is always
+    # respected as a floor, but very narrow images still get a
+    # legible minimum size from the responsive heuristic.
+    body_size = cfg.get("body_size", max(base_pt, derived))
     pad_x          = cfg.get("strip_padding_x",
                              max(24, int(img_w * 0.055)))
     pad_y_top      = cfg.get("strip_padding_y_top",
@@ -177,9 +300,14 @@ def render(template_path, output_path, settings, name, address, phone):
 
     # ---- fonts ----
     # Single body face (SemiBold) at one size, plus a same-size Bold for
-    # the recipient name. Hierarchy = weight, NOT scale.
-    body_font = load_font(FONT_SEMIBOLD, body_size, "SemiBold")
-    name_font = load_font(FONT_BOLD,     body_size, "Bold")
+    # the recipient name. Hierarchy = weight, NOT scale.  The bold weight
+    # for the name is only applied when the operator toggled it on in the
+    # Style panel (default: on).
+    body_font = load_font(font_cascade(font_family, "regular"), body_size, "SemiBold")
+    if pcfg.get("bold_name", True):
+        name_font = load_font(font_cascade(font_family, "bold"), body_size, "Bold")
+    else:
+        name_font = body_font
 
     body_h = sum(body_font.getmetrics())
 
@@ -242,15 +370,26 @@ def render(template_path, output_path, settings, name, address, phone):
 
     strip_h = pad_y_top + total_text_h + pad_y_bottom
 
-    # ---- compose canvas (template on top, orange strip below) ----
-    new_h  = img_h + strip_h
-    canvas = Image.new("RGB", (img_w, new_h), hex_to_rgb(strip_bg))
-    canvas.paste(base, (0, 0))
+    # ---- compose canvas ----
+    # Strip modes EXTEND the canvas downward and paint the text on a
+    # coloured band below the template (template stays pristine).
+    # 'on_template' mode skips the extension and paints the text
+    # directly on the template's own bottom margin — best when the
+    # template already includes a designed footer.
+    if draw_on_template:
+        canvas = base.copy()
+        new_h  = img_h
+        text_origin_y = img_h - pad_y_bottom - total_text_h
+    else:
+        new_h  = img_h + strip_h
+        canvas = Image.new("RGB", (img_w, new_h), hex_to_rgb(strip_bg))
+        canvas.paste(base, (0, 0))
+        text_origin_y = img_h + pad_y_top
 
     draw = ImageDraw.Draw(canvas)
 
     # ---- render each line centred horizontally ----
-    y = img_h + pad_y_top
+    y = text_origin_y
     for i, ln in enumerate(lines):
         w = measure(ln["text"], ln["font"])
         x = (img_w - w) // 2
