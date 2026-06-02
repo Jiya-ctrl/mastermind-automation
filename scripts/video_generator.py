@@ -206,13 +206,11 @@ def overlay_content_from_argv() -> tuple[str, list[str], str]:
     return DEFAULT_NAME_LINE, DEFAULT_ADDRESS_LINES, DEFAULT_CONTACT_LINE
 
 
-name_line, address_lines, contact_line = overlay_content_from_argv()
-TEXT_LINES = build_text_lines(name_line, address_lines, contact_line)
 # Personalisation style — operator-tunable via the dashboard
 # (/personalisation-config). Settings.json values are used as the seed,
 # then the persisted personalisation file overlays its own choices on
-# top. This is the SAME merge order the API endpoint uses, so the UI
-# and the renderer always see the same effective values.
+# top. This MUST be loaded BEFORE build_text_lines() is called because
+# the function reads BOLD_NAME at call time.
 _pcfg = load_personalisation_config()
 # Settings.json defaults are kept as the final fallback so an
 # operator who never opens the Style panel still gets sane output.
@@ -230,6 +228,9 @@ MARGIN_PCT      = float(_pcfg.get("margin_pct") or 0.05)
 # MarginV is calculated from frame height in build_overlay below — keep
 # a reasonable absolute fallback for ASS layout calculations.
 BOTTOM_MARGIN_PX = 80
+
+name_line, address_lines, contact_line = overlay_content_from_argv()
+TEXT_LINES = build_text_lines(name_line, address_lines, contact_line)
 
 # WhatsApp Cloud API caps video uploads at 16 MB. We target 14 MB so
 # container overhead + Meta's internal re-mux can't push us over.
