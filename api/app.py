@@ -2418,6 +2418,18 @@ _MAX_ATTEMPTS    = 3       # how many times to auto-retry inside the worker
 _WORKER_IDLE_S   = 1.0     # sleep when queue is empty
 _LOG_TAIL_BYTES  = 256_000 # safety cap when slurping the .jsonl tail
 
+# Throttle between consecutive sends. Meta flags accounts that fire
+# messages too rapidly — 15-20 s between sends keeps us comfortably
+# below any per-second rate limit and reads as human-paced traffic
+# in the conversation graph.  Operator can override via env var
+# DELIVERY_SEND_GAP_SECONDS for testing (set 0 to disable).
+try:
+    _SEND_GAP_S = float(os.environ.get("DELIVERY_SEND_GAP_SECONDS", "18"))
+except (TypeError, ValueError):
+    _SEND_GAP_S = 18.0
+if _SEND_GAP_S < 0:
+    _SEND_GAP_S = 0.0
+
 
 # ---------------------------------------------------------------------------
 # Filename-stem helper — MUST match scripts/video_generator.py::sanitize_filename.
@@ -2923,8 +2935,14 @@ def _sweep_stuck_sending():
 
 
 def _worker_loop():
-    _delivery_log("INFO", "worker started", provider=_PROVIDER.name)
+    _delivery_log(
+        "INFO", "worker started",
+        provider=_PROVIDER.name, send_gap_s=_SEND_GAP_S,
+    )
     last_sweep = 0
+    # Tracks when the most recent provider.send() (prompt OR media)
+    # finished. Used to honour _SEND_GAP_S between consecutive sends.
+    last_send_at = 0.0
     while not _WORKER_STOP_EVT.is_set():
         # Stuck-Sending sweep on every tick (cheap — single in-memory scan).
         now = time.time()
@@ -2951,6 +2969,17 @@ def _worker_loop():
         flow_v  = (d.get("flow")  or "direct").lower()
         stage_v = (d.get("stage") or "media").lower()
 
+        # --- Throttle: respect _SEND_GAP_S between consecutive sends.
+        # Sleeps in short slices so the worker stays responsive to the
+        # stop signal during long gaps.
+        if _SEND_GAP_S > 0 and last_send_at > 0:
+            wait_left = _SEND_GAP_S - (time.time() - last_send_at)
+            while wait_left > 0 and not _WORKER_STOP_EVT.is_set():
+                _WORKER_STOP_EVT.wait(min(0.5, wait_left))
+                wait_left = _SEND_GAP_S - (time.time() - last_send_at)
+            if _WORKER_STOP_EVT.is_set():
+                break
+
         if flow_v == "two-step" and stage_v == "prompt":
             print(
                 f"[prompt-stage] delivery_id={d.get('id')} phone={d.get('recipient_phone')} "
@@ -2964,6 +2993,7 @@ def _worker_loop():
                 }
             except Exception as e:
                 result = {"ok": False, "provider_message_id": None, "error": str(e)}
+            last_send_at = time.time()
             _record_two_step_event(
                 "last_prompt_send",
                 delivery_id=d.get("id"),
@@ -3001,6 +3031,7 @@ def _worker_loop():
                 result = _PROVIDER.send(d)
         except Exception as e:
             result = {"ok": False, "provider_message_id": None, "error": str(e)}
+        last_send_at = time.time()
         if force_freeform:
             print(
                 f"[media-send] delivery_id={d.get('id')} ok={result.get('ok')} "
