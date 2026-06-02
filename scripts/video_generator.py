@@ -15,7 +15,39 @@ import tempfile
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "settings.json")
+PERSONALISATION_CONFIG_PATH = os.path.join(PROJECT_ROOT, "data", "personalisation-config.json")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output", "videos")
+
+
+def load_personalisation_config():
+    """Operator-tunable style overrides (font / colour / background /
+    position) written by the API's /personalisation-config endpoint.
+    Returns a dict with safe defaults overlaid by anything the file
+    contains, so call-sites can trust every key is populated."""
+    defaults = {
+        "font_family":      "DejaVu Sans",
+        "font_size":        46,
+        "font_color":       "#0B1C30",
+        "bold_name":        True,
+        "shadow_opacity":   0.45,
+        "background_mode":  "on_template",
+        "strip_color":      "#F97316",
+        "strip_height_pct": 0.24,
+        "position":         "bottom",
+        "margin_pct":       0.05,
+    }
+    if not os.path.isfile(PERSONALISATION_CONFIG_PATH):
+        return defaults
+    try:
+        with open(PERSONALISATION_CONFIG_PATH, "r", encoding="utf-8") as f:
+            persisted = json.load(f)
+        if isinstance(persisted, dict):
+            for k in defaults:
+                if k in persisted:
+                    defaults[k] = persisted[k]
+    except Exception:
+        pass
+    return defaults
 
 
 def sanitize_filename(text: str) -> str:
@@ -118,9 +150,13 @@ def build_text_lines(name_line: str, address_lines: list[str], contact_line: str
     out.append(SECTION_SPACER)
     out.append("Contact:")
     if name_line:
-        # Name is the only line that gets weight emphasis. Same size as
-        # everything else — premium, balanced hierarchy.
-        out.append(f"{B_OPEN}{name_line}{B_CLOSE}")
+        # Name optionally gets weight emphasis (operator-toggleable via
+        # personalisation-config.bold_name). Same size as everything else —
+        # premium, balanced hierarchy.
+        if BOLD_NAME:
+            out.append(f"{B_OPEN}{name_line}{B_CLOSE}")
+        else:
+            out.append(name_line)
     out.append(contact_line)
     return out
 
@@ -172,15 +208,28 @@ def overlay_content_from_argv() -> tuple[str, list[str], str]:
 
 name_line, address_lines, contact_line = overlay_content_from_argv()
 TEXT_LINES = build_text_lines(name_line, address_lines, contact_line)
-# Use a widely available font on Linux production containers.
-# Bahnschrift may exist on Windows, but Vercel/Linux does not ship it.
-FONT_NAME = "DejaVu Sans"
-BOLD = False
-TEXT_COLOR = settings["font_color"]                # from config (operator-tunable)
-BASE_FONTSIZE = int(settings["font_size"])         # from config (auto-fits down)
-SHADOW_ALPHA = 0.45          # stronger drop shadow for legibility
-SHADOW_PX = 2
-BOTTOM_MARGIN_PX = 80        # ASS MarginV: clear space below the bottom line
+# Personalisation style — operator-tunable via the dashboard
+# (/personalisation-config). Settings.json values are used as the seed,
+# then the persisted personalisation file overlays its own choices on
+# top. This is the SAME merge order the API endpoint uses, so the UI
+# and the renderer always see the same effective values.
+_pcfg = load_personalisation_config()
+# Settings.json defaults are kept as the final fallback so an
+# operator who never opens the Style panel still gets sane output.
+FONT_NAME       = _pcfg.get("font_family") or "DejaVu Sans"
+BOLD            = False                              # name-only bold handled inline via {\b1}
+BOLD_NAME       = bool(_pcfg.get("bold_name", True))
+TEXT_COLOR      = _pcfg.get("font_color") or settings.get("font_color") or "#0B1C30"
+BASE_FONTSIZE   = int(_pcfg.get("font_size") or settings.get("font_size") or 46)
+SHADOW_ALPHA    = float(_pcfg.get("shadow_opacity", 0.45))
+SHADOW_PX       = 2 if SHADOW_ALPHA > 0 else 0
+BG_MODE         = _pcfg.get("background_mode") or "on_template"
+STRIP_COLOR     = (_pcfg.get("strip_color") or "#F97316").lstrip("#")
+STRIP_HEIGHT_PCT = float(_pcfg.get("strip_height_pct") or 0.24)
+MARGIN_PCT      = float(_pcfg.get("margin_pct") or 0.05)
+# MarginV is calculated from frame height in build_overlay below — keep
+# a reasonable absolute fallback for ASS layout calculations.
+BOTTOM_MARGIN_PX = 80
 
 # WhatsApp Cloud API caps video uploads at 16 MB. We target 14 MB so
 # container overhead + Meta's internal re-mux can't push us over.
@@ -376,15 +425,36 @@ target_bufsize    = target_maxrate * 2
 print(f"Size budget: {TARGET_SIZE_MB:.1f} MB over {duration:.1f}s -> "
       f"video {target_video_kbps}k (cap {target_maxrate}k) + audio {AUDIO_BITRATE_KBPS}k")
 
-# libass renders the personalisation text directly onto the template
-# (no extra background strip baked-in). Operator's template is
-# expected to leave a designated area at the bottom of the frame
-# during the overlay window — text colour + position assume that.
+# Build the filter chain. Background mode decides whether libass
+# alone renders on the template's own designed area, or whether
+# drawbox paints a coloured strip behind the text first. All four
+# modes pull their colour from the personalisation config.
+_BG_MODE_TO_COLOUR = {
+    "orange_strip": "F97316",
+    "white_strip":  "FFFFFF",
+    "custom_strip": STRIP_COLOR,
+}
+if BG_MODE in _BG_MODE_TO_COLOUR:
+    _strip_hex = _BG_MODE_TO_COLOUR[BG_MODE]
+    overlay_filter = (
+        "drawbox="
+        f"x=0:y=ih*(1-{STRIP_HEIGHT_PCT}):w=iw:h=ih*{STRIP_HEIGHT_PCT}:"
+        f"color=0x{_strip_hex}@1:t=fill:"
+        f"enable='between(t\\,{start:.3f}\\,{end:.3f})'"
+        ",ass=overlay.ass"
+    )
+    print(f"Filter: drawbox ({BG_MODE}, #{_strip_hex}) + ass overlay")
+else:
+    # 'on_template' or any unknown mode → libass only, text lands on
+    # whatever the template already shows during the overlay window.
+    overlay_filter = "ass=overlay.ass"
+    print("Filter: ass overlay only (text on template)")
+
 cmd = [
     ffmpeg_path,
     "-y",
     "-i", template_path,
-    "-vf", "ass=overlay.ass",
+    "-vf", overlay_filter,
     # Video re-encode with quality-aware bitrate ceiling
     "-c:v", "libx264",
     "-preset", "fast",

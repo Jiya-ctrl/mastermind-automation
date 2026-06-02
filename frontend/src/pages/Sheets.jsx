@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import PageHeader from '../components/PageHeader'
+import PersonalisationPanel from '../components/PersonalisationPanel'
 
 import { API_BASE, friendlyApiError } from '../config'
 const JOB_POLL_MS  = 1500   // tight polling so progress feels live
@@ -1075,6 +1076,9 @@ export default function Sheets() {
           </div>
         )}
       </section>
+
+      {/* ---------- Personalisation style panel ---------- */}
+      <PersonalisationPanel />
 
       {/* ---------- Recipient table ---------- */}
       <section className="card sheets-recipient-card">

@@ -3356,6 +3356,127 @@ def _write_template_config_file(cfg):
     os.replace(tmp, path)
 
 
+# ---------------------------------------------------------------------------
+# Personalisation style config — controls how name / phone / address render
+# on every generated image and video. Operator edits via the Sheets-page
+# panel; both generators read this file at render time (with fallbacks to
+# config/settings.json if it's absent). Survives restarts because it lives
+# in data/ which is bind-mounted at the project root.
+# ---------------------------------------------------------------------------
+DEFAULT_PERSONALISATION_CONFIG = {
+    "font_family":      "DejaVu Sans",  # safe Linux default; UI can pick others
+    "font_size":        46,
+    "font_color":       "#0B1C30",      # deep navy — legible on white backdrops
+    "bold_name":        True,           # name line gets weight emphasis
+    "shadow_opacity":   0.45,           # 0.0 (none) .. 1.0 (max)
+    "background_mode":  "on_template",  # on_template | orange_strip | white_strip | custom_strip
+    "strip_color":      "#F97316",      # used when mode = custom_strip
+    "strip_height_pct": 0.24,           # used when mode = *_strip
+    "position":         "bottom",       # bottom | top | center (MVP: bottom only)
+    "margin_pct":       0.05,           # distance from edge as fraction of frame height
+}
+
+_ALLOWED_BACKGROUND_MODES = {"on_template", "orange_strip", "white_strip", "custom_strip"}
+_ALLOWED_POSITIONS        = {"bottom", "top", "center"}
+
+
+def _personalisation_config_path():
+    return os.path.join(PROJECT_ROOT, "data", "personalisation-config.json")
+
+
+def _read_personalisation_config():
+    """Return the effective personalisation config (defaults overlaid with
+    any persisted operator edits). Always returns a complete dict so
+    consumers (generators, frontend) never have to check for missing keys."""
+    cfg = dict(DEFAULT_PERSONALISATION_CONFIG)
+    path = _personalisation_config_path()
+    if not os.path.isfile(path):
+        return cfg
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            persisted = json.load(f)
+        if isinstance(persisted, dict):
+            cfg.update({k: v for k, v in persisted.items() if k in DEFAULT_PERSONALISATION_CONFIG})
+    except Exception:  # noqa: BLE001
+        pass
+    return cfg
+
+
+def _write_personalisation_config(cfg):
+    path = _personalisation_config_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+    os.replace(tmp, path)
+
+
+def _validate_personalisation_payload(payload):
+    """Whitelist + type-check incoming config edits so the file stays sane.
+    Returns (validated_dict, errors_list)."""
+    errors = []
+    out = {}
+    if not isinstance(payload, dict):
+        return out, ["body must be a JSON object"]
+
+    def _hex(s):
+        s = (s or "").strip()
+        if re.fullmatch(r"#[0-9A-Fa-f]{6}", s):
+            return s.upper()
+        return None
+
+    if "font_family" in payload:
+        v = (str(payload["font_family"]) or "").strip()
+        if v: out["font_family"] = v[:64]
+    if "font_size" in payload:
+        try:
+            n = int(payload["font_size"])
+            if 12 <= n <= 200: out["font_size"] = n
+            else: errors.append("font_size must be 12-200")
+        except (TypeError, ValueError):
+            errors.append("font_size must be a number")
+    if "font_color" in payload:
+        c = _hex(payload["font_color"])
+        if c: out["font_color"] = c
+        else: errors.append("font_color must be #RRGGBB")
+    if "bold_name" in payload:
+        out["bold_name"] = bool(payload["bold_name"])
+    if "shadow_opacity" in payload:
+        try:
+            f = float(payload["shadow_opacity"])
+            if 0.0 <= f <= 1.0: out["shadow_opacity"] = round(f, 3)
+            else: errors.append("shadow_opacity must be 0.0-1.0")
+        except (TypeError, ValueError):
+            errors.append("shadow_opacity must be a number")
+    if "background_mode" in payload:
+        v = (str(payload["background_mode"]) or "").strip()
+        if v in _ALLOWED_BACKGROUND_MODES: out["background_mode"] = v
+        else: errors.append(f"background_mode must be one of {sorted(_ALLOWED_BACKGROUND_MODES)}")
+    if "strip_color" in payload:
+        c = _hex(payload["strip_color"])
+        if c: out["strip_color"] = c
+        else: errors.append("strip_color must be #RRGGBB")
+    if "strip_height_pct" in payload:
+        try:
+            f = float(payload["strip_height_pct"])
+            if 0.05 <= f <= 0.50: out["strip_height_pct"] = round(f, 3)
+            else: errors.append("strip_height_pct must be 0.05-0.50")
+        except (TypeError, ValueError):
+            errors.append("strip_height_pct must be a number")
+    if "position" in payload:
+        v = (str(payload["position"]) or "").strip()
+        if v in _ALLOWED_POSITIONS: out["position"] = v
+        else: errors.append(f"position must be one of {sorted(_ALLOWED_POSITIONS)}")
+    if "margin_pct" in payload:
+        try:
+            f = float(payload["margin_pct"])
+            if 0.0 <= f <= 0.30: out["margin_pct"] = round(f, 3)
+            else: errors.append("margin_pct must be 0.0-0.30")
+        except (TypeError, ValueError):
+            errors.append("margin_pct must be a number")
+    return out, errors
+
+
 def _effective_template_config():
     """Merge env vars with the persisted JSON file (file wins). This is
     what the provider should see — the operator's UI override beats the
@@ -3596,6 +3717,60 @@ def deliveries_template_config():
                   image=eff.get("template_image") or "",
                   video=eff.get("template_video") or "")
     return jsonify({"status": "success", "config": eff})
+
+
+@app.route("/personalisation-config", methods=["GET", "POST", "DELETE"])
+def personalisation_config():
+    """Read / update / reset the personalisation style applied to every
+    generated image and video.
+
+    GET    → returns the effective config (defaults overlaid with
+             persisted operator edits).
+    POST   → body { font_family, font_size, font_color, bold_name,
+             shadow_opacity, background_mode, strip_color,
+             strip_height_pct, position, margin_pct } — any subset of
+             keys can be sent; whitelist + range-validated; persisted
+             merged on top of the current file.
+    DELETE → reset to defaults (deletes the persisted file).
+    """
+    if request.method == "GET":
+        return jsonify({
+            "status":   "success",
+            "config":   _read_personalisation_config(),
+            "defaults": dict(DEFAULT_PERSONALISATION_CONFIG),
+        })
+
+    if request.method == "DELETE":
+        try:
+            path = _personalisation_config_path()
+            if os.path.isfile(path):
+                os.remove(path)
+        except Exception as e:  # noqa: BLE001
+            return jsonify({"status": "error", "error": f"could not reset: {e}"}), 500
+        return jsonify({
+            "status": "success",
+            "config": _read_personalisation_config(),
+            "reset":  True,
+        })
+
+    # POST
+    payload = request.get_json(silent=True) or {}
+    validated, errors = _validate_personalisation_payload(payload)
+    if errors:
+        return jsonify({"status": "error", "errors": errors}), 400
+    if not validated:
+        return jsonify({"status": "error", "errors": ["no valid fields provided"]}), 400
+
+    current = _read_personalisation_config()
+    current.update(validated)
+    try:
+        _write_personalisation_config(current)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"status": "error", "error": f"could not persist: {e}"}), 500
+
+    _delivery_log("INFO", "personalisation config updated",
+                  changed_keys=",".join(sorted(validated.keys())))
+    return jsonify({"status": "success", "config": current})
 
 
 @app.route("/deliveries/provider", methods=["GET", "POST"])
