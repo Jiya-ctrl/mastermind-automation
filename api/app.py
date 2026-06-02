@@ -195,6 +195,10 @@ _PUBLIC_PREFIXES = (
     "/health",
     "/files/videos/",
     "/files/images/",
+    # Template files are also gated by signed URLs inside the handler
+    # so the personalisation panel preview (an <img>/<video> tag that
+    # can't send a Bearer header) can load the uploaded template.
+    "/files/templates/",
     # WhatsApp's webhook calls from Meta's network — can't carry a Bearer
     # token. Cryptographically verified instead via X-Hub-Signature-256
     # inside the handler (fail-closed: rejects with 403 if WHATSAPP_APP_SECRET
@@ -2067,9 +2071,14 @@ def serve_image_file(filename):
 
 @app.route("/files/templates/<path:filename>", methods=["GET"])
 def serve_template_file(filename):
-    """Templates are gated by the regular Bearer-token middleware (this
-    route is NOT in _PUBLIC_PREFIXES), so signed URLs aren't needed —
-    only an authenticated operator can fetch them."""
+    """Gated by signed `?exp&sig` (same scheme as /files/videos and
+    /files/images) so <img>/<video> tags in the personalisation
+    preview can render the template without a Bearer header. Routes
+    in _PUBLIC_PREFIXES bypass the global auth middleware; signature
+    verification happens here instead."""
+    blocked = _verify_file_signature(f"/files/templates/{filename}")
+    if blocked:
+        return blocked
     return send_from_directory(TEMPLATES_DIR, filename, conditional=True)
 
 
@@ -2139,11 +2148,16 @@ def current_template():
         return jsonify({"status": "error", "error": "template file is empty"}), 404
 
     filename = os.path.basename(rel_path)
+    # Signed URL keeps the file accessible to <img>/<video> tags (which
+    # cannot send a Bearer header) without making the templates dir
+    # publicly browseable — caller still needs the operator's
+    # SESSION_SECRET-derived signature to download.
+    signed = _session.make_signed_url(f"/files/templates/{filename}")
     return jsonify({
         "status":   "success",
         "type":     kind,
         "filename": filename,
-        "url":      f"/files/templates/{filename}",
+        "url":      signed,
         "size":     size,
         "mtime":    int(mtime * 1000),
         "path":     rel_path,

@@ -106,48 +106,36 @@ export default function PersonalisationPanel() {
     return () => { cancelled = true }
   }, [])
 
-  // Fetch the actual uploaded template files as blobs so we can render
-  // them in the preview cards. Skipped silently when either template
-  // is missing — preview falls back to the gray placeholder.
+  // Resolve the operator's uploaded template URLs. /current-template
+  // now returns a SIGNED url that any <img>/<video> tag can load —
+  // same signed-URL scheme already used by /files/videos/ and
+  // /files/images/. No blob dance, no auth headers needed on the
+  // resulting URL, just a regular HTTP src attribute.
   useEffect(() => {
-    const objectUrls = []
     let cancelled = false
     ;(async () => {
       for (const kind of ['image', 'video']) {
         try {
-          const metaRes = await fetch(`${API_BASE}/current-template?kind=${kind}`)
-          if (!metaRes.ok) {
-            console.warn(`[preview] /current-template?kind=${kind} → ${metaRes.status}`)
+          const res = await fetch(`${API_BASE}/current-template?kind=${kind}`)
+          if (!res.ok) {
+            console.warn(`[preview] /current-template?kind=${kind} → ${res.status}`)
             continue
           }
-          const data = await metaRes.json().catch(() => ({}))
+          const data = await res.json().catch(() => ({}))
           if (!data?.url) {
             console.warn(`[preview] /current-template?kind=${kind} returned no url`, data)
             continue
           }
-          const blobRes = await fetch(`${API_BASE}${data.url}`)
-          if (!blobRes.ok) {
-            console.warn(`[preview] template blob fetch ${data.url} → ${blobRes.status}`)
-            continue
-          }
-          const blob = await blobRes.blob()
-          const url = URL.createObjectURL(blob)
-          objectUrls.push(url)
-          if (cancelled) {
-            URL.revokeObjectURL(url)
-            continue
-          }
-          if (kind === 'image') setTemplateImageUrl(url)
-          else setTemplateVideoUrl(url)
+          if (cancelled) return
+          const full = `${API_BASE}${data.url}`
+          if (kind === 'image') setTemplateImageUrl(full)
+          else setTemplateVideoUrl(full)
         } catch (e) {
           console.warn(`[preview] template fetch error (${kind}):`, e)
         }
       }
     })()
-    return () => {
-      cancelled = true
-      objectUrls.forEach((u) => URL.revokeObjectURL(u))
-    }
+    return () => { cancelled = true }
   }, [])
 
   // Pull the first connected recipient so the preview shows REAL
