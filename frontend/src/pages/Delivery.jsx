@@ -74,6 +74,10 @@ export default function Delivery() {
   const [worker, setWorker] = useState(null)
   const [error, setError]   = useState(null)
   const [loaded, setLoaded] = useState(false)
+  // Backend response schema version — surfaced in the page header so a
+  // quick glance tells us whether the latest backend code is actually
+  // running (or whether a deploy is still cached / failed).
+  const [schemaV, setSchemaV] = useState(null)
 
   const [tab, setTab]         = useState('All')
   const [query, setQuery]     = useState('')
@@ -143,6 +147,9 @@ export default function Delivery() {
           Failed:    data.counts?.Failed    ?? 0,
         })
         setWorker(data.worker || null)
+        if (typeof data.schema_version === 'number') {
+          setSchemaV(data.schema_version)
+        }
         setError(null)
       } else {
         setError(data?.error || 'unexpected response')
@@ -519,7 +526,7 @@ export default function Delivery() {
         title="WhatsApp Delivery"
         subtitle={
           worker
-            ? `Provider: ${worker.provider} · Worker ${worker.alive ? 'running' : 'stopped'}`
+            ? `Provider: ${worker.provider} · Worker ${worker.alive ? 'running' : 'stopped'}${schemaV ? ` · schema v${schemaV}` : ''} · ${items.length} rows`
             : 'Per-recipient WhatsApp delivery state.'
         }
         actions={

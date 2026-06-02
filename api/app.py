@@ -1958,11 +1958,15 @@ def delivery_status():
     """
     merged, counts = _materialise_delivery_view()
     return jsonify({
-        "status":  "success",
-        "count":   len(merged),
-        "counts":  counts,
-        "items":   merged,
-        "worker":  _worker_status(),
+        "status":         "success",
+        "count":          len(merged),
+        "counts":         counts,
+        "items":          merged,
+        "worker":         _worker_status(),
+        # Bumped to 2 when each (stem, kind) became its own row. Frontend
+        # surfaces this in the page header so we can verify the deploy
+        # actually shipped without spelunking through container logs.
+        "schema_version": 2,
     })
 
 
