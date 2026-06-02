@@ -309,6 +309,11 @@ export default function Sheets() {
     try {
       await fetch(`${API_BASE}/recipients/sheet-source`, { method: 'DELETE' })
       await refreshSheetSource()
+      // After disconnect, immediately reveal the import panel pre-set to
+      // the Google Sheet mode so the operator has an obvious next step
+      // (avoids the "where did all the buttons go?" surprise).
+      setImportMode('gsheet')
+      setAddOpen(true)
     } catch (e) {
       const msg = (e && e.message) ? e.message : String(e)
       setError(`Disconnect failed: ${msg}`)
@@ -1111,10 +1116,23 @@ export default function Sheets() {
           <div className="sheet-actions">
             <button
               type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                setImportMode('gsheet')
+                setAddOpen(true)
+                // Scroll the just-opened panel into view (it renders above
+                // this card, so we scroll up rather than down).
+                setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 50)
+              }}
+              disabled={generating || addOpen}
+              title="Connect a Google Sheet by URL"
+            ><span>🔗</span> Connect Google Sheet</button>
+            <button
+              type="button"
               className="btn btn-secondary"
               onClick={openSheet}
               disabled={items.length === 0}
-              title="Download recipients as CSV"
+              title="Download current recipients as CSV"
             ><span>↓</span> Download Sheet</button>
             <button
               type="button"
