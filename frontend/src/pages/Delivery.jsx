@@ -662,7 +662,7 @@ export default function Delivery() {
                 else if (r.sentAt)  timeLabel = formatTimestamp(r.sentAt)
                 else                timeLabel = formatTimestamp(r.createdAt)
                 return (
-                  <tr key={r.id}>
+                  <tr key={r.row_id || r.id}>
                     <td>
                       <div className="cell-name">
                         <span className="cell-avatar">{initialsOf(displayName)}</span>

@@ -1996,7 +1996,10 @@ def dashboard_stats():
 
     total_videos     = sum(1 for it in items_view if it.get("video"))
     total_images     = sum(1 for it in items_view if it.get("image"))
-    total_recipients = len(items_view)
+    # items_view is now ONE ROW PER (stem, kind), so a recipient who has
+    # both an image and a video produces two rows. Count unique stems
+    # for the headline recipient KPI.
+    total_recipients = len({it.get("stem") for it in items_view if it.get("stem")})
     delivered        = counts_view.get("Delivered", 0)
     failed           = counts_view.get("Failed", 0)
 
@@ -4300,74 +4303,106 @@ def deliveries_logs():
 # ---------------------------------------------------------------------------
 
 def _materialise_delivery_view():
-    """Cross-join generated outputs with delivery records by stem.
+    """Cross-join generated outputs with delivery records — ONE ROW PER
+    (stem, kind). A stem that has both an image and a video file
+    produces TWO rows so the operator can independently view and send
+    each. Each row carries:
 
-    Each returned item shape (superset of the previous /delivery-status):
       {
-        id, stem, name,                       <- from filesystem
-        recipient_id?, recipient_phone?,      <- from delivery (if any)
-        recipient_address?, recipient_name?,
-        video, image,                         <- {filename, url, size}
-        status,                               <- Queued | Sending | Delivered | Failed
-        attempts, last_error, provider_message_id, sentAt, deliveredAt,
-        createdAt                             <- file mtime
+        id:         stem (NOT unique on its own — pair with media_kind),
+        row_id:     unique per (stem, kind), used as React key,
+        stem, name, createdAt,
+        media_kind: 'image' | 'video',
+        image | video: {filename, url, size},   (only the active kind set)
+        status, attempts, last_error, ...,
+        delivery_id, recipient_id, recipient_name, recipient_phone,
+        recipient_address                       (when a delivery row exists)
       }
     """
     fs_items = _list_generated_items()  # already sorted newest-first
 
     with _DELIVERIES_LOCK:
         doc = _load_deliveries()
-    # Map: stem -> most-recently-updated delivery for that stem.
-    latest_by_stem = {}
+
+    # Map: (stem, kind) -> most-recently-updated delivery for that pair.
+    # Legacy rows with no media_kind fall back to a single 'unknown' bucket
+    # so they still surface — but new deliveries are always tagged with a
+    # kind so this fallback rarely triggers.
+    latest_by_pair = {}
     for d in doc["items"]:
         s = d.get("stem")
         if not s:
             continue
-        prev = latest_by_stem.get(s)
+        k = (d.get("media_kind") or "unknown")
+        key = (s, k)
+        prev = latest_by_pair.get(key)
         if prev is None or d.get("updatedAt", 0) >= prev.get("updatedAt", 0):
-            latest_by_stem[s] = d
-
-    # Cache the file scans so every row's _detect_media_for_stem doesn't
-    # rescan the output dirs from scratch.
-    _videos = _scan_output_dir(OUTPUT_VIDEOS, _VIDEO_OUT_EXTS_SET)
-    _images = _scan_output_dir(OUTPUT_IMAGES, _IMAGE_OUT_EXTS_SET)
+            latest_by_pair[key] = d
 
     merged = []
     for it in fs_items:
-        dlv = latest_by_stem.get(it["id"])
-        # LIVE detection — wins over any stored snapshot. This is what the
-        # Delivery page reads to render the Media Type pill + filename.
-        det = _detect_media_for_stem(it["id"], videos=_videos, images=_images, log=False)
-        base = {
-            **it,
-            "detected_kind":     det["kind"],
-            "detected_filename": det["filename"],
-            # Also surface as `media_kind` for any caller that's been
-            # reading that field directly — keeps the live truth there too.
-            "media_kind":        det["kind"],
-        }
-        if dlv:
-            merged.append({
-                **base,
-                "status":              dlv["status"],
-                "recipient_id":        dlv.get("recipient_id"),
-                "recipient_name":      dlv.get("recipient_name"),
-                "recipient_phone":     dlv.get("recipient_phone"),
-                "recipient_address":   dlv.get("recipient_address"),
-                "delivery_id":         dlv.get("id"),
-                "attempts":            dlv.get("attempts", 0),
-                "max_attempts":        dlv.get("max_attempts", _MAX_ATTEMPTS),
-                "last_error":          dlv.get("last_error"),
-                "provider":            dlv.get("provider"),
-                "provider_message_id": dlv.get("provider_message_id"),
-                "sentAt":              dlv.get("sentAt"),
-                "deliveredAt":         dlv.get("deliveredAt"),
-                # The stored kind on the delivery row — useful for debugging
-                # but the UI should read `detected_kind` for display.
-                "stored_media_kind":   dlv.get("media_kind"),
-            })
-        else:
-            merged.append(base)  # filesystem-only fallback (Queued / Failed by pair)
+        # For each kind the recipient has on disk, emit its own row.
+        kinds_present = []
+        if it.get("image"):
+            kinds_present.append("image")
+        if it.get("video"):
+            kinds_present.append("video")
+        if not kinds_present:
+            continue
+
+        for kind in kinds_present:
+            media_block = it.get(kind)
+            dlv = latest_by_pair.get((it["id"], kind))
+            # Fallback: a legacy delivery row stored without media_kind.
+            # Only apply when no kind-specific row exists, and only to ONE
+            # of the two kinds (preferring the kind the delivery row
+            # carries via its image/video filename).
+            if dlv is None:
+                legacy = latest_by_pair.get((it["id"], "unknown"))
+                if legacy is not None:
+                    if (kind == "video" and legacy.get("video_filename")) or \
+                       (kind == "image" and legacy.get("image_filename")):
+                        dlv = legacy
+
+            base = {
+                # Keep `id` == stem for backwards compatibility with the
+                # frontend's per-row helpers, but add row_id for React keys.
+                "id":                it["id"],
+                "row_id":            f"{it['id']}::{kind}",
+                "stem":              it["id"],
+                "name":              it.get("name"),
+                "createdAt":         it.get("createdAt"),
+                "media_kind":        kind,
+                "detected_kind":     kind,
+                "detected_filename": media_block.get("filename") if media_block else None,
+                kind:                media_block,
+                # The other kind's slot stays None so existing UI code that
+                # reads r.video / r.image still works without surprise data.
+                ("video" if kind == "image" else "image"): None,
+                "status":            "Queued",   # default fs-only status
+            }
+            if dlv:
+                base.update({
+                    "status":              dlv["status"],
+                    "recipient_id":        dlv.get("recipient_id"),
+                    "recipient_name":      dlv.get("recipient_name"),
+                    "recipient_phone":     dlv.get("recipient_phone"),
+                    "recipient_address":   dlv.get("recipient_address"),
+                    "delivery_id":         dlv.get("id"),
+                    "attempts":            dlv.get("attempts", 0),
+                    "max_attempts":        dlv.get("max_attempts", _MAX_ATTEMPTS),
+                    "last_error":          dlv.get("last_error"),
+                    "provider":            dlv.get("provider"),
+                    "provider_message_id": dlv.get("provider_message_id"),
+                    "sentAt":              dlv.get("sentAt"),
+                    "deliveredAt":         dlv.get("deliveredAt"),
+                    "stored_media_kind":   dlv.get("media_kind"),
+                })
+            merged.append(base)
+
+    # Stable ordering — newest createdAt first, then kind so image and
+    # video rows for the same recipient sit next to each other.
+    merged.sort(key=lambda r: (-(r.get("createdAt") or 0), r.get("media_kind") or ""))
 
     counts = {"Delivered": 0, "Sending": 0, "Queued": 0, "Failed": 0}
     for m in merged:
