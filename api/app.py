@@ -2699,6 +2699,19 @@ def _enqueue_recipients(recipient_subset, media_kind=None):
                         "reason":       "neither image nor video on disk",
                     })
                     continue
+                # If the preferred kind already has a delivery row for
+                # this recipient, fall back to the OTHER kind when its
+                # file is available. Otherwise re-clicking Send Media
+                # after a video has been sent (and a NEW image just
+                # generated) would silently skip the image because auto
+                # mode keeps picking video.
+                preferred_key = (r.get("id"), stem, effective_kind)
+                if preferred_key in existing:
+                    other = "image" if effective_kind == "video" else "video"
+                    other_file = i if other == "image" else v
+                    other_key = (r.get("id"), stem, other)
+                    if other_file and other_key not in existing:
+                        effective_kind = other
 
             key = (r.get("id"), stem, effective_kind)
             if key in existing:

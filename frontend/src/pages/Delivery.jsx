@@ -459,9 +459,20 @@ export default function Delivery() {
 
   // ---------- derived ----------
   const failedCount = counts.Failed
-  // Items that have a generated render on disk but no delivery row yet — the
-  // pool that Send All / First N draws from.
-  const availableToSend = items.filter((r) => !r.delivery_id).length
+  // Items the operator can still enqueue from this page. Includes:
+  //   * recipients with no delivery row yet
+  //   * recipients whose existing delivery is for ONE kind but the
+  //     OTHER kind also has a generated file on disk — clicking Send
+  //     Media now sends that second kind too (backend auto-picks the
+  //     un-enqueued kind to avoid colliding with the existing row).
+  const availableToSend = items.filter((r) => {
+    if (!r.delivery_id) return true
+    const stored = String(r.stored_media_kind || '').toLowerCase()
+    if (r.video && r.image && (stored === 'video' || stored === 'image')) {
+      return true
+    }
+    return false
+  }).length
 
   // Per-row helpers — read the BACKEND's live detection FIRST so the UI
   // is never out of sync with the filesystem. `detected_kind` /
