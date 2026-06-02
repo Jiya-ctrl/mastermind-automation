@@ -22,40 +22,102 @@ concurrency:
   group: deploy-vps
   cancel-in-progress: false
 
+# Shared SSH config — reused by each attempt below. Bumped timeout from
+# the old 60s because Hostinger's SSH listener occasionally takes >60s
+# to accept a connection from GitHub Actions runner IPs (we saw two
+# identical 1m 7s i/o-timeout failures with the default).
+env:
+  SSH_TIMEOUT: 180s
+  CMD_TIMEOUT: 12m
+
 jobs:
   deploy:
     name: Pull + rebuild on Hostinger
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 22
     steps:
-      - name: SSH into VPS and redeploy
+      # ---------- Attempt 1 ---------------------------------------------
+      - name: Deploy attempt 1 of 3
+        id: try1
+        continue-on-error: true
         uses: appleboy/ssh-action@v1.2.0
         with:
           host:            ${{ secrets.VPS_HOST }}
           username:        ${{ secrets.VPS_USER }}
           key:             ${{ secrets.VPS_SSH_KEY }}
-          timeout:         60s
-          command_timeout: 12m
+          timeout:         ${{ env.SSH_TIMEOUT }}
+          command_timeout: ${{ env.CMD_TIMEOUT }}
           script: |
             set -euo pipefail
-
             echo "==> Step 1/4: Pulling latest code from origin/main"
             cd /opt/mastermind-automation
             git fetch origin main
             git reset --hard origin/main
             git log -1 --oneline
-
             echo
             echo "==> Step 2/4: Rebuilding Docker images (using layer cache)"
             docker compose --env-file .env.production up -d --build
-
             echo
             echo "==> Step 3/4: Pruning unused images"
             docker image prune -f
-
             echo
             echo "==> Step 4/4: Container status"
             docker compose ps
-
             echo
-            echo "==> Deploy complete."
+            echo "==> Deploy complete (attempt 1)."
+
+      # ---------- Attempt 2 (only if attempt 1 failed) ------------------
+      - name: Wait 25s before retry
+        if: steps.try1.outcome == 'failure'
+        run: |
+          echo "Attempt 1 failed (likely Hostinger SSH transient timeout). Backing off 25s before retry."
+          sleep 25
+
+      - name: Deploy attempt 2 of 3
+        id: try2
+        if: steps.try1.outcome == 'failure'
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host:            ${{ secrets.VPS_HOST }}
+          username:        ${{ secrets.VPS_USER }}
+          key:             ${{ secrets.VPS_SSH_KEY }}
+          timeout:         ${{ env.SSH_TIMEOUT }}
+          command_timeout: ${{ env.CMD_TIMEOUT }}
+          script: |
+            set -euo pipefail
+            cd /opt/mastermind-automation
+            git fetch origin main
+            git reset --hard origin/main
+            git log -1 --oneline
+            docker compose --env-file .env.production up -d --build
+            docker image prune -f
+            docker compose ps
+            echo "==> Deploy complete (attempt 2)."
+
+      # ---------- Attempt 3 (final — failure here fails the workflow) ---
+      - name: Wait 50s before final retry
+        if: steps.try1.outcome == 'failure' && steps.try2.outcome == 'failure'
+        run: |
+          echo "Attempt 2 also failed. Final 50s backoff before last try."
+          sleep 50
+
+      - name: Deploy attempt 3 of 3
+        if: steps.try1.outcome == 'failure' && steps.try2.outcome == 'failure'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host:            ${{ secrets.VPS_HOST }}
+          username:        ${{ secrets.VPS_USER }}
+          key:             ${{ secrets.VPS_SSH_KEY }}
+          timeout:         ${{ env.SSH_TIMEOUT }}
+          command_timeout: ${{ env.CMD_TIMEOUT }}
+          script: |
+            set -euo pipefail
+            cd /opt/mastermind-automation
+            git fetch origin main
+            git reset --hard origin/main
+            git log -1 --oneline
+            docker compose --env-file .env.production up -d --build
+            docker image prune -f
+            docker compose ps
+            echo "==> Deploy complete (attempt 3)."
