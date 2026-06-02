@@ -2426,13 +2426,54 @@ _LOG_TAIL_BYTES  = 256_000 # safety cap when slurping the .jsonl tail
 # messages too rapidly — 15-20 s between sends keeps us comfortably
 # below any per-second rate limit and reads as human-paced traffic
 # in the conversation graph.  Operator can override via env var
-# DELIVERY_SEND_GAP_SECONDS for testing (set 0 to disable).
+# DELIVERY_SEND_GAP_SECONDS for testing (set 0 to disable). The
+# operator can ALSO override at runtime via the Settings page /
+# Delivery page stepper, which writes data/delivery-settings.json;
+# that file wins over the env var so changes take effect without a
+# restart. _SEND_GAP_S is a fallback for legacy code paths; the
+# worker reads _current_send_gap() at every send.
 try:
-    _SEND_GAP_S = float(os.environ.get("DELIVERY_SEND_GAP_SECONDS", "18"))
+    _SEND_GAP_DEFAULT_S = float(os.environ.get("DELIVERY_SEND_GAP_SECONDS", "18"))
 except (TypeError, ValueError):
-    _SEND_GAP_S = 18.0
-if _SEND_GAP_S < 0:
-    _SEND_GAP_S = 0.0
+    _SEND_GAP_DEFAULT_S = 18.0
+if _SEND_GAP_DEFAULT_S < 0:
+    _SEND_GAP_DEFAULT_S = 0.0
+_SEND_GAP_S = _SEND_GAP_DEFAULT_S    # legacy alias for log lines
+_SEND_GAP_MAX_S = 600.0              # 10-minute ceiling (sanity)
+
+def _delivery_settings_path():
+    return os.path.join(PROJECT_ROOT, "data", "delivery-settings.json")
+
+def _read_delivery_settings():
+    path = _delivery_settings_path()
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fp:
+            return json.load(fp) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+def _write_delivery_settings(updates):
+    cur = _read_delivery_settings()
+    cur.update(updates)
+    path = _delivery_settings_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fp:
+        json.dump(cur, fp, indent=2)
+    return cur
+
+def _current_send_gap():
+    """Resolve the live send-gap value. Operator's UI choice (in
+    data/delivery-settings.json) overrides the env default."""
+    persisted = _read_delivery_settings().get("send_gap_s")
+    try:
+        if persisted is not None:
+            v = float(persisted)
+            return max(0.0, min(v, _SEND_GAP_MAX_S))
+    except (TypeError, ValueError):
+        pass
+    return _SEND_GAP_DEFAULT_S
 
 
 # ---------------------------------------------------------------------------
@@ -2941,7 +2982,7 @@ def _sweep_stuck_sending():
 def _worker_loop():
     _delivery_log(
         "INFO", "worker started",
-        provider=_PROVIDER.name, send_gap_s=_SEND_GAP_S,
+        provider=_PROVIDER.name, send_gap_s=_current_send_gap(),
     )
     last_sweep = 0
     # Tracks when the most recent provider.send() (prompt OR media)
@@ -2973,14 +3014,18 @@ def _worker_loop():
         flow_v  = (d.get("flow")  or "direct").lower()
         stage_v = (d.get("stage") or "media").lower()
 
-        # --- Throttle: respect _SEND_GAP_S between consecutive sends.
-        # Sleeps in short slices so the worker stays responsive to the
-        # stop signal during long gaps.
-        if _SEND_GAP_S > 0 and last_send_at > 0:
-            wait_left = _SEND_GAP_S - (time.time() - last_send_at)
+        # --- Throttle: respect the operator-configured send-gap between
+        # consecutive sends. Re-read on every iteration so changes from
+        # the Settings/Delivery stepper take effect mid-batch without
+        # restarting the worker.
+        gap = _current_send_gap()
+        if gap > 0 and last_send_at > 0:
+            wait_left = gap - (time.time() - last_send_at)
             while wait_left > 0 and not _WORKER_STOP_EVT.is_set():
                 _WORKER_STOP_EVT.wait(min(0.5, wait_left))
-                wait_left = _SEND_GAP_S - (time.time() - last_send_at)
+                # Live-reload the gap inside the wait loop too — an
+                # operator who shortens it should see immediate effect.
+                wait_left = _current_send_gap() - (time.time() - last_send_at)
             if _WORKER_STOP_EVT.is_set():
                 break
 
@@ -3400,6 +3445,36 @@ def deliveries_clear():
 @app.route("/deliveries/worker", methods=["GET"])
 def deliveries_worker_status():
     return jsonify({"status": "success", "worker": _worker_status()})
+
+
+@app.route("/deliveries/send-gap", methods=["GET", "POST"])
+def deliveries_send_gap():
+    """Read or set the inter-send delay (seconds). POST body:
+       { "seconds": <number, 0 - _SEND_GAP_MAX_S> }
+    Returns the live effective value plus the env default."""
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        raw = payload.get("seconds")
+        try:
+            secs = float(raw)
+        except (TypeError, ValueError):
+            return jsonify({
+                "status": "error",
+                "error":  "seconds must be a non-negative number",
+            }), 400
+        if secs < 0 or secs > _SEND_GAP_MAX_S:
+            return jsonify({
+                "status": "error",
+                "error":  f"seconds must be between 0 and {int(_SEND_GAP_MAX_S)}",
+            }), 400
+        _write_delivery_settings({"send_gap_s": secs})
+        _delivery_log("INFO", "send-gap updated", seconds=secs)
+    return jsonify({
+        "status":          "success",
+        "seconds":         _current_send_gap(),
+        "default_seconds": _SEND_GAP_DEFAULT_S,
+        "max_seconds":     _SEND_GAP_MAX_S,
+    })
 
 
 @app.route("/deliveries/worker/start", methods=["POST"])

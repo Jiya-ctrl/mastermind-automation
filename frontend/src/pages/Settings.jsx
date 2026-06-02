@@ -32,7 +32,12 @@ export default function Settings() {
   const [watermark, setWatermark] = useState(true)
 
   // ---- WhatsApp preferences --------------------------------------------
+  // Send delay = inter-send throttle in seconds. Loaded from
+  // /deliveries/send-gap on mount; setSendDelay below also POSTs the
+  // new value so the delivery worker picks it up live.
   const [sendDelay, setSendDelay] = useState(15)
+  const [sendDelayLoaded, setSendDelayLoaded] = useState(false)
+  const [sendDelaySaving, setSendDelaySaving] = useState(false)
 
   // ---- Storage usage ---------------------------------------------------
   const [stats, setStats] = useState(null)
@@ -55,6 +60,58 @@ export default function Settings() {
     const t = setInterval(load, 20000)
     return () => { cancelled = true; clearInterval(t) }
   }, [])
+
+  // Load the current send-gap from the backend once on mount.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/deliveries/send-gap`)
+        if (!res.ok) return
+        const data = await res.json().catch(() => ({}))
+        if (cancelled) return
+        if (typeof data?.seconds === 'number') {
+          setSendDelay(Math.round(data.seconds))
+        }
+      } catch { /* keep default until reload */ }
+      finally {
+        if (!cancelled) setSendDelayLoaded(true)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  // Persist a new send-gap to the backend. Called by the stepper UI
+  // below (with a tiny debounce so rapid clicks don't spam the API).
+  async function persistSendDelay(seconds) {
+    setSendDelaySaving(true)
+    try {
+      const res = await fetch(`${API_BASE}/deliveries/send-gap`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ seconds }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || data.status !== 'success') {
+        throw new Error(data?.error || `HTTP ${res.status}`)
+      }
+      setToast({ kind: 'success', msg: `Send delay → ${seconds}s` })
+      setTimeout(() => setToast(null), 1800)
+    } catch (e) {
+      setToast({ kind: 'error', msg: `Save failed: ${e.message || e}` })
+      setTimeout(() => setToast(null), 2500)
+    } finally {
+      setSendDelaySaving(false)
+    }
+  }
+
+  // Debounce the save so a flurry of "+/-" clicks only fires one POST.
+  useEffect(() => {
+    if (!sendDelayLoaded) return
+    const t = setTimeout(() => persistSendDelay(sendDelay), 350)
+    return () => clearTimeout(t)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sendDelay, sendDelayLoaded])
 
   const usage = useMemo(() => {
     const totalBytes = items.reduce(
@@ -234,7 +291,10 @@ export default function Settings() {
         <div className="settings-row">
           <div className="settings-row-text">
             <div className="settings-row-label">Send delay</div>
-            <div className="settings-row-help">Seconds to wait between consecutive sends to avoid throttling.</div>
+            <div className="settings-row-help">
+              Seconds to wait between consecutive sends to avoid throttling.
+              {sendDelaySaving ? ' · saving…' : sendDelayLoaded ? ' · saved' : ' · loading…'}
+            </div>
           </div>
           <div className="settings-stepper">
             <button type="button" className="settings-stepper-btn"
@@ -244,10 +304,11 @@ export default function Settings() {
               className="settings-stepper-input"
               value={sendDelay}
               min={0}
-              onChange={(e) => setSendDelay(Math.max(0, Number(e.target.value) || 0))}
+              max={600}
+              onChange={(e) => setSendDelay(Math.max(0, Math.min(600, Number(e.target.value) || 0)))}
             />
             <button type="button" className="settings-stepper-btn"
-              onClick={() => setSendDelay((n) => n + 5)}>+</button>
+              onClick={() => setSendDelay((n) => Math.min(600, n + 5))}>+</button>
             <span className="settings-stepper-suffix">sec</span>
           </div>
         </div>

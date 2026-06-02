@@ -16584,9 +16584,6 @@ select.pstyle-input { cursor: pointer; }
   display: inline-block;
 }
 .send-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
   min-width: 280px;
   padding: 8px;
   background: #FFFFFF;
@@ -16594,6 +16591,71 @@ select.pstyle-input { cursor: pointer; }
   border-radius: 12px;
   box-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
   z-index: 1500;
+}
+/* Portalled to <body> so the page-banner's overflow:hidden cannot
+   clip the menu. Position is calculated from the trigger button's
+   getBoundingClientRect (top/right) in the page component. */
+.send-menu-portal {
+  position: fixed;
+}
+
+/* Inline send-gap stepper (Delivery page page-banner) */
+.send-gap-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #FFFFFF;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.send-gap-inline-label {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 11px;
+  opacity: 0.95;
+}
+.send-gap-inline-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.18);
+  color: #FFFFFF;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: background 140ms, transform 80ms;
+}
+.send-gap-inline-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.32);
+}
+.send-gap-inline-btn:active:not(:disabled) { transform: scale(0.94); }
+.send-gap-inline-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.send-gap-inline-input {
+  width: 40px;
+  height: 22px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.92);
+  color: #0B1C30;
+  border: none;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 0 4px;
+  -moz-appearance: textfield;
+}
+.send-gap-inline-input::-webkit-outer-spin-button,
+.send-gap-inline-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.send-gap-inline-suffix {
+  font-size: 11px;
+  opacity: 0.95;
+  min-width: 1.5em;
 }
 .send-menu-group {
   font-size: 11px;

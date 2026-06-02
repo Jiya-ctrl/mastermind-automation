@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { createPortal } from 'react-dom'
 import PageHeader from '../components/PageHeader'
 
 import { API_BASE, friendlyApiError } from '../config'
@@ -84,6 +85,17 @@ export default function Delivery() {
   // below.
   const [sendMenuOpen, setSendMenuOpen] = useState(false)
   const sendMenuRef = useRef(null)
+  const sendMenuBtnRef = useRef(null)
+  // Position calculated from the button's bounding-rect when the menu
+  // opens — needed because the parent .page-banner has overflow:hidden
+  // which would otherwise clip the dropdown.
+  const [sendMenuPos, setSendMenuPos] = useState({ top: 0, right: 0 })
+
+  // Operator-configurable send-gap (seconds between consecutive
+  // sends). Same backend endpoint as the Settings page so changes
+  // here propagate everywhere.
+  const [sendGap, setSendGap]         = useState(null)
+  const [sendGapSaving, setSendGapSaving] = useState(false)
 
   const [tab, setTab]         = useState('All')
   const [query, setQuery]     = useState('')
@@ -357,18 +369,79 @@ export default function Delivery() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Close the Send Media dropdown on outside-click so it behaves like
-  // any other contextual menu — no overlay needed.
+  // Close the Send Media dropdown on outside-click + recalc its
+  // viewport position. The menu is portalled to document.body so the
+  // page-banner's overflow:hidden doesn't clip it — that means we
+  // need to drive its position from the button's getBoundingClientRect.
   useEffect(() => {
     if (!sendMenuOpen) return
     function onDocClick(e) {
-      if (sendMenuRef.current && !sendMenuRef.current.contains(e.target)) {
-        setSendMenuOpen(false)
-      }
+      const inMenu = sendMenuRef.current && sendMenuRef.current.contains(e.target)
+      const inBtn  = sendMenuBtnRef.current && sendMenuBtnRef.current.contains(e.target)
+      if (!inMenu && !inBtn) setSendMenuOpen(false)
     }
+    function reposition() {
+      const btn = sendMenuBtnRef.current
+      if (!btn) return
+      const r = btn.getBoundingClientRect()
+      setSendMenuPos({
+        top:   r.bottom + 8,
+        right: Math.max(8, window.innerWidth - r.right),
+      })
+    }
+    reposition()
     document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
+    window.addEventListener('resize', reposition)
+    window.addEventListener('scroll', reposition, true)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      window.removeEventListener('resize', reposition)
+      window.removeEventListener('scroll', reposition, true)
+    }
   }, [sendMenuOpen])
+
+  // Load the current send-gap once on mount.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/deliveries/send-gap`)
+        if (!res.ok) return
+        const data = await res.json().catch(() => ({}))
+        if (!cancelled && typeof data?.seconds === 'number') {
+          setSendGap(Math.round(data.seconds))
+        }
+      } catch { /* ignore */ }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  // Debounced POST so click-mashing the +/- buttons fires one request.
+  useEffect(() => {
+    if (sendGap === null) return
+    const t = setTimeout(async () => {
+      setSendGapSaving(true)
+      try {
+        const res = await fetch(`${API_BASE}/deliveries/send-gap`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ seconds: sendGap }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          showToast(`Send gap save failed: ${data?.error || res.status}`, 'error')
+        } else {
+          showToast(`Send gap → ${sendGap}s`, 'success')
+        }
+      } catch (e) {
+        showToast(`Send gap save failed: ${e.message || e}`, 'error')
+      } finally {
+        setSendGapSaving(false)
+      }
+    }, 400)
+    return () => clearTimeout(t)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sendGap])
 
   // Toast cleanup on unmount.
   useEffect(() => () => {
@@ -557,69 +630,107 @@ export default function Delivery() {
               {worker?.alive ? '⏸ Pause worker' : '▶ Start worker'}
             </button>
 
+            {/* Inline send-gap stepper — same backend knob as the
+                Settings page so changes here propagate. Compact 3-button
+                layout to fit alongside Pause/Send/Retry. */}
+            <div className="send-gap-inline" title="Seconds between consecutive sends (Meta-friendly pacing)">
+              <span className="send-gap-inline-label">Gap</span>
+              <button
+                type="button"
+                className="send-gap-inline-btn"
+                onClick={() => setSendGap((n) => Math.max(0, (n ?? 0) - 5))}
+                disabled={sendGap === null || sendGap <= 0}
+              >−</button>
+              <input
+                type="number"
+                className="send-gap-inline-input"
+                value={sendGap ?? ''}
+                min={0}
+                max={600}
+                onChange={(e) => {
+                  const v = Math.max(0, Math.min(600, Number(e.target.value) || 0))
+                  setSendGap(v)
+                }}
+              />
+              <button
+                type="button"
+                className="send-gap-inline-btn"
+                onClick={() => setSendGap((n) => Math.min(600, (n ?? 0) + 5))}
+                disabled={sendGap === null}
+              >+</button>
+              <span className="send-gap-inline-suffix">
+                s{sendGapSaving ? '…' : ''}
+              </span>
+            </div>
+
             {/* Send Media dropdown — explicit options so the operator
                 picks exactly what to send instead of relying on auto-
                 mode. Counts beside each option reflect the live pending
                 rows so e.g. "Send all images (2)" tells you the
                 outcome before you click. */}
-            <div className="send-menu-wrap" ref={sendMenuRef}>
-              <button
-                type="button"
-                className="btn btn-secondary gen-banner-btn"
-                onClick={() => setSendMenuOpen((o) => !o)}
-                disabled={sendDisabled}
-                title={availableToSend === 0
-                  ? 'Every ready render already has a delivery record'
-                  : `Pick what to send — ${pendingImages} image${pendingImages === 1 ? '' : 's'} and ${pendingVideos} video${pendingVideos === 1 ? '' : 's'} waiting`}
-                aria-expanded={sendMenuOpen}
-                aria-haspopup="menu"
+            <button
+              ref={sendMenuBtnRef}
+              type="button"
+              className="btn btn-secondary gen-banner-btn"
+              onClick={() => setSendMenuOpen((o) => !o)}
+              disabled={sendDisabled}
+              title={availableToSend === 0
+                ? 'Every ready render already has a delivery record'
+                : `Pick what to send — ${pendingImages} image${pendingImages === 1 ? '' : 's'} and ${pendingVideos} video${pendingVideos === 1 ? '' : 's'} waiting`}
+              aria-expanded={sendMenuOpen}
+              aria-haspopup="menu"
+            >
+              ➤ Send Media{availableToSend > 0 ? ` (${availableToSend})` : ''} ▾
+            </button>
+            {sendMenuOpen && createPortal(
+              <div
+                className="send-menu send-menu-portal"
+                role="menu"
+                ref={sendMenuRef}
+                style={{ top: sendMenuPos.top, right: sendMenuPos.right }}
               >
-                ➤ Send Media{availableToSend > 0 ? ` (${availableToSend})` : ''} ▾
-              </button>
-              {sendMenuOpen && (
-                <div className="send-menu" role="menu">
-                  <div className="send-menu-group">Images</div>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="send-menu-item"
-                    disabled={pendingImages === 0 || acting}
-                    onClick={() => { setSendMenuOpen(false); enqueueBatch(0, 'image', 'all images') }}
-                  >Send all images{pendingImages > 0 ? ` (${pendingImages})` : ''}</button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="send-menu-item"
-                    disabled={pendingImages === 0 || acting}
-                    onClick={() => { setSendMenuOpen(false); enqueueBatch(5, 'image', 'first 5 images') }}
-                  >Send first 5 images</button>
-                  <div className="send-menu-sep" />
-                  <div className="send-menu-group">Videos</div>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="send-menu-item"
-                    disabled={pendingVideos === 0 || acting}
-                    onClick={() => { setSendMenuOpen(false); enqueueBatch(0, 'video', 'all videos') }}
-                  >Send all videos{pendingVideos > 0 ? ` (${pendingVideos})` : ''}</button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="send-menu-item"
-                    disabled={pendingVideos === 0 || acting}
-                    onClick={() => { setSendMenuOpen(false); enqueueBatch(5, 'video', 'first 5 videos') }}
-                  >Send first 5 videos</button>
-                  <div className="send-menu-sep" />
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="send-menu-item"
-                    disabled={availableToSend === 0 || acting}
-                    onClick={() => { setSendMenuOpen(false); enqueueBatch(0, null, 'auto') }}
-                  >Send everything (auto-pick per recipient)</button>
-                </div>
-              )}
-            </div>
+                <div className="send-menu-group">Images</div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="send-menu-item"
+                  disabled={pendingImages === 0 || acting}
+                  onClick={() => { setSendMenuOpen(false); enqueueBatch(0, 'image', 'all images') }}
+                >Send all images{pendingImages > 0 ? ` (${pendingImages})` : ''}</button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="send-menu-item"
+                  disabled={pendingImages === 0 || acting}
+                  onClick={() => { setSendMenuOpen(false); enqueueBatch(5, 'image', 'first 5 images') }}
+                >Send first 5 images</button>
+                <div className="send-menu-sep" />
+                <div className="send-menu-group">Videos</div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="send-menu-item"
+                  disabled={pendingVideos === 0 || acting}
+                  onClick={() => { setSendMenuOpen(false); enqueueBatch(0, 'video', 'all videos') }}
+                >Send all videos{pendingVideos > 0 ? ` (${pendingVideos})` : ''}</button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="send-menu-item"
+                  disabled={pendingVideos === 0 || acting}
+                  onClick={() => { setSendMenuOpen(false); enqueueBatch(5, 'video', 'first 5 videos') }}
+                >Send first 5 videos</button>
+                <div className="send-menu-sep" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="send-menu-item"
+                  disabled={availableToSend === 0 || acting}
+                  onClick={() => { setSendMenuOpen(false); enqueueBatch(0, null, 'auto') }}
+                >Send everything (auto-pick per recipient)</button>
+              </div>,
+              document.body,
+            )}
 
             <button
               type="button"
