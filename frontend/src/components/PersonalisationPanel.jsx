@@ -107,10 +107,11 @@ export default function PersonalisationPanel() {
   }, [])
 
   // Resolve the operator's uploaded template URLs. /current-template
-  // now returns a SIGNED url that any <img>/<video> tag can load —
-  // same signed-URL scheme already used by /files/videos/ and
-  // /files/images/. No blob dance, no auth headers needed on the
-  // resulting URL, just a regular HTTP src attribute.
+  // returns:
+  //   - data_uri  (images only — inline base64, ZERO proxy/auth deps)
+  //   - url       (signed URL on /files/templates/, used for video)
+  // We prefer data_uri because it survives any reverse-proxy quirks
+  // — the actual bytes are in the JSON response.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -122,14 +123,14 @@ export default function PersonalisationPanel() {
             continue
           }
           const data = await res.json().catch(() => ({}))
-          if (!data?.url) {
-            console.warn(`[preview] /current-template?kind=${kind} returned no url`, data)
+          const src = data?.data_uri || (data?.url ? `${API_BASE}${data.url}` : null)
+          if (!src) {
+            console.warn(`[preview] /current-template?kind=${kind} returned no usable source`, data)
             continue
           }
           if (cancelled) return
-          const full = `${API_BASE}${data.url}`
-          if (kind === 'image') setTemplateImageUrl(full)
-          else setTemplateVideoUrl(full)
+          if (kind === 'image') setTemplateImageUrl(src)
+          else setTemplateVideoUrl(src)
         } catch (e) {
           console.warn(`[preview] template fetch error (${kind}):`, e)
         }

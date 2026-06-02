@@ -2153,14 +2153,39 @@ def current_template():
     # publicly browseable — caller still needs the operator's
     # SESSION_SECRET-derived signature to download.
     signed = _session.make_signed_url(f"/files/templates/{filename}")
+
+    # Additionally, for IMAGES we inline the file as a base64 data URI.
+    # Images are small (<2 MB typically) and the data-URI approach has
+    # zero dependencies on the reverse-proxy passing /files/templates
+    # through to the backend — which is what made the previous signed-
+    # URL-only path unreliable in some deployments. Videos are too big
+    # to inline so they continue using the signed URL.
+    data_uri = None
+    if kind == "image" and size <= 4 * 1024 * 1024:
+        try:
+            import base64 as _b64
+            ext = (os.path.splitext(filename)[1] or ".jpg").lower()
+            mime = {
+                ".jpg":  "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".png":  "image/png",
+                ".gif":  "image/gif",
+                ".webp": "image/webp",
+            }.get(ext, "application/octet-stream")
+            with open(abs_path, "rb") as fp:
+                data_uri = f"data:{mime};base64,{_b64.b64encode(fp.read()).decode('ascii')}"
+        except Exception as e:  # noqa: BLE001
+            print(f"[/current-template] inline base64 failed: {e}", flush=True)
+
     return jsonify({
-        "status":   "success",
-        "type":     kind,
-        "filename": filename,
-        "url":      signed,
-        "size":     size,
-        "mtime":    int(mtime * 1000),
-        "path":     rel_path,
+        "status":    "success",
+        "type":      kind,
+        "filename":  filename,
+        "url":       signed,
+        "data_uri":  data_uri,
+        "size":      size,
+        "mtime":     int(mtime * 1000),
+        "path":      rel_path,
     })
 
 
