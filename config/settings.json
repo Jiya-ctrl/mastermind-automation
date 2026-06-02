@@ -1,7 +1,7 @@
 {
   "overlay_start": 61,
   "overlay_end": 64,
-  "font_color": "#FFFFFF",
+  "font_color": "#0B1C30",
   "font_size": 46,
   "template_video": "templates/uploaded_video.mp4",
   "template_image": "templates/uploaded_image.jpeg",

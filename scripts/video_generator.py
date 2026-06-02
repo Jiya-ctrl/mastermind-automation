@@ -176,22 +176,11 @@ TEXT_LINES = build_text_lines(name_line, address_lines, contact_line)
 # Bahnschrift may exist on Windows, but Vercel/Linux does not ship it.
 FONT_NAME = "DejaVu Sans"
 BOLD = False
-TEXT_COLOR = settings["font_color"]                # from config (default white)
+TEXT_COLOR = settings["font_color"]                # from config (operator-tunable)
 BASE_FONTSIZE = int(settings["font_size"])         # from config (auto-fits down)
-SHADOW_ALPHA = 0.45          # stronger drop shadow for legibility on the strip
+SHADOW_ALPHA = 0.45          # stronger drop shadow for legibility
 SHADOW_PX = 2
 BOTTOM_MARGIN_PX = 80        # ASS MarginV: clear space below the bottom line
-
-# Brand strip behind the personalisation text — same orange + white
-# treatment the image renderer applies, so a recipient who gets both
-# media kinds sees a consistent contact card across them. The strip
-# spans the bottom STRIP_HEIGHT_PCT% of the frame and is drawn only
-# during the overlay window (overlay_start → overlay_end) so the rest
-# of the template plays untouched. Colours fall back to safe defaults
-# if config/settings.json doesn't carry image_overlay overrides.
-_image_overlay = settings.get("image_overlay") or {}
-STRIP_COLOR     = (_image_overlay.get("strip_color") or "#F97316").lstrip("#")
-STRIP_HEIGHT_PCT = 0.24      # bottom 24% of the frame — fits 4-5 lines comfortably
 
 # WhatsApp Cloud API caps video uploads at 16 MB. We target 14 MB so
 # container overhead + Meta's internal re-mux can't push us over.
@@ -331,10 +320,26 @@ print("OUTPUT output_path   :", abs_output)
 print("=" * 60)
 
 duration = get_duration(template_path)
-start = max(0.0, OVERLAY_START)
-end = min(duration, OVERLAY_END)
+# Overlay window: settings.json may carry legacy hard-coded
+# overlay_start/overlay_end values (61-64 from the original template).
+# Honour them ONLY if they're inside this template's duration;
+# otherwise default to the LAST 5.5 SECONDS of the video — that's the
+# convention the operator's brand templates leave free for the
+# personalised contact card and it works for any video length without
+# manual reconfiguration on new uploads.
+DEFAULT_TAIL_SEC = 5.5
+if OVERLAY_END <= duration and OVERLAY_START < OVERLAY_END:
+    start = max(0.0, OVERLAY_START)
+    end   = OVERLAY_END
+else:
+    start = max(0.0, duration - DEFAULT_TAIL_SEC)
+    end   = duration
+    print(f"Overlay window auto-set to last {DEFAULT_TAIL_SEC}s "
+          f"({start:.2f}-{end:.2f}s of {duration:.2f}s) — "
+          f"settings.json values ({OVERLAY_START}-{OVERLAY_END}) "
+          f"were outside this template's duration.")
 if end <= start:
-    print(f"Overlay window {OVERLAY_START}-{OVERLAY_END}s is outside video duration {duration:.2f}s")
+    print(f"Computed overlay window {start}-{end}s is invalid for duration {duration:.2f}s")
     sys.exit(1)
 print(f"Video duration: {duration:.2f}s -> overlay from {start:.2f}s to {end:.2f}s")
 
@@ -371,25 +376,15 @@ target_bufsize    = target_maxrate * 2
 print(f"Size budget: {TARGET_SIZE_MB:.1f} MB over {duration:.1f}s -> "
       f"video {target_video_kbps}k (cap {target_maxrate}k) + audio {AUDIO_BITRATE_KBPS}k")
 
-# Filtergraph: drawbox paints the brand-orange strip across the bottom
-# STRIP_HEIGHT_PCT of the frame during the overlay window only (so the
-# rest of the template plays untouched), then libass renders the
-# personalisation lines centred inside that strip. drawbox accepts
-# `ih` for input height — keeps the strip proportional to whatever
-# resolution the operator's template lands at.
-overlay_filter = (
-    "drawbox="
-    f"x=0:y=ih*(1-{STRIP_HEIGHT_PCT}):w=iw:h=ih*{STRIP_HEIGHT_PCT}:"
-    f"color=0x{STRIP_COLOR}@1:t=fill:"
-    f"enable='between(t\\,{start:.3f}\\,{end:.3f})'"
-    ",ass=overlay.ass"
-)
-
+# libass renders the personalisation text directly onto the template
+# (no extra background strip baked-in). Operator's template is
+# expected to leave a designated area at the bottom of the frame
+# during the overlay window — text colour + position assume that.
 cmd = [
     ffmpeg_path,
     "-y",
     "-i", template_path,
-    "-vf", overlay_filter,
+    "-vf", "ass=overlay.ass",
     # Video re-encode with quality-aware bitrate ceiling
     "-c:v", "libx264",
     "-preset", "fast",
