@@ -17,6 +17,12 @@ const FIXED_USER_ID   = 'mastermind_abc'
 // The presence of a non-expired token is the ONLY thing that grants access
 // (the old `mm_auth_v3 === '1'` boolean flag, which could be set in
 // DevTools to bypass login, is gone).
+//
+// Storage is sessionStorage (NOT localStorage) so the token does not
+// outlive the browser tab — closing the tab logs the operator out. The
+// reload-detector below additionally clears it on F5/Ctrl+R so every
+// page refresh forces a fresh login. Internal SPA navigation keeps the
+// token because no actual page reload happens.
 const SESSION_KEY      = 'mm_session_v1'      // { token, expiresAt }
 const RESET_TOKEN_KEY  = 'mm_reset_token_v2'
 const DEVICE_TOKEN_KEY = 'mm_device_token_v1' // per-browser quick-unlock key
@@ -30,8 +36,25 @@ const LEGACY_KEYS = [
 ]
 
 function bootstrap() {
-  if (typeof localStorage === 'undefined') return
-  LEGACY_KEYS.forEach((k) => { try { localStorage.removeItem(k) } catch (_) {} })
+  if (typeof window === 'undefined') return
+  // Wipe legacy keys
+  try {
+    LEGACY_KEYS.forEach((k) => { try { localStorage.removeItem(k) } catch (_) {} })
+    // Migration: any previously-saved session in localStorage is now
+    // stale (we moved to sessionStorage). Remove it once.
+    try { localStorage.removeItem(SESSION_KEY) } catch (_) {}
+  } catch (_) {}
+  // Force re-login on every page refresh. PerformanceNavigationTiming
+  // reports `type === 'reload'` for F5 / Ctrl+R / location.reload(), but
+  // not for fresh tab opens — those naturally start with empty
+  // sessionStorage so they already require login.
+  try {
+    const entries = performance.getEntriesByType?.('navigation') || []
+    const nav = entries[0]
+    if (nav && nav.type === 'reload') {
+      try { sessionStorage.removeItem(SESSION_KEY) } catch (_) {}
+    }
+  } catch (_) {}
 }
 bootstrap()
 
@@ -41,7 +64,7 @@ export function getFixedUserId() { return FIXED_USER_ID }
 /** Read the stored session record, or null if absent / malformed. */
 export function getSession() {
   try {
-    const raw = localStorage.getItem(SESSION_KEY)
+    const raw = sessionStorage.getItem(SESSION_KEY)
     if (!raw) return null
     const s = JSON.parse(raw)
     if (!s || typeof s.token !== 'string' || typeof s.expiresAt !== 'number') {
@@ -70,11 +93,13 @@ export function getSessionToken() {
 
 function saveSession(token, expiresAt) {
   try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ token, expiresAt }))
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, expiresAt }))
   } catch (_) {}
 }
 
 function clearSession() {
+  try { sessionStorage.removeItem(SESSION_KEY) } catch (_) {}
+  // Defensive: in case a legacy localStorage copy survived migration.
   try { localStorage.removeItem(SESSION_KEY) } catch (_) {}
 }
 

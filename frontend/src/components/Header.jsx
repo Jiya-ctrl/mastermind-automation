@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { signOut as authSignOut } from '../auth'
 
@@ -9,6 +10,10 @@ export default function Header() {
 
   // Profile dropdown.
   const [menuOpen, setMenuOpen] = useState(false)
+  // Logout confirmation modal — surfaced when the operator clicks Logout
+  // from the profile dropdown so an accidental click doesn't kill an
+  // in-progress send batch.
+  const [confirmLogout, setConfirmLogout] = useState(false)
   const wrapperRef = useRef(null)
 
   // Welcome heading glow — fires once after a fresh login. The voice
@@ -52,11 +57,24 @@ export default function Header() {
     setMenuOpen(false)
     navigate(path)
   }
-  function signOut() {
+  function askLogout() {
     setMenuOpen(false)
+    setConfirmLogout(true)
+  }
+  function confirmedSignOut() {
+    setConfirmLogout(false)
     authSignOut()
     navigate('/login', { replace: true })
   }
+
+  // Escape closes the confirmation modal; click on the dimmed backdrop
+  // also closes it (preserving the in-progress workflow).
+  useEffect(() => {
+    if (!confirmLogout) return
+    const onKey = (e) => { if (e.key === 'Escape') setConfirmLogout(false) }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [confirmLogout])
 
   return (
     <header className={`header${onDashboard ? '' : ' header-slim'}`}>
@@ -117,7 +135,7 @@ export default function Header() {
                 type="button"
                 role="menuitem"
                 className="profile-menu-item profile-menu-item-danger"
-                onClick={signOut}
+                onClick={askLogout}
               >
                 <span className="profile-menu-icon">⏻</span> Logout
               </button>
@@ -125,6 +143,47 @@ export default function Header() {
           )}
         </div>
       </div>
+
+      {confirmLogout && createPortal(
+        <div
+          className="logout-confirm-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="logout-confirm-title"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setConfirmLogout(false)
+          }}
+        >
+          <div className="logout-confirm-card">
+            <div className="logout-confirm-icon" aria-hidden="true">⏻</div>
+            <h3 id="logout-confirm-title" className="logout-confirm-title">
+              Sign out of the workspace?
+            </h3>
+            <p className="logout-confirm-sub">
+              You'll be returned to the login screen. Any in-progress send
+              batches will continue running in the background.
+            </p>
+            <div className="logout-confirm-actions">
+              <button
+                type="button"
+                className="logout-confirm-btn logout-confirm-btn-cancel"
+                onClick={() => setConfirmLogout(false)}
+                autoFocus
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="logout-confirm-btn logout-confirm-btn-danger"
+                onClick={confirmedSignOut}
+              >
+                Yes, sign out
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </header>
   )
 }
