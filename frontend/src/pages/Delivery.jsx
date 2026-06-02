@@ -78,6 +78,12 @@ export default function Delivery() {
   // quick glance tells us whether the latest backend code is actually
   // running (or whether a deploy is still cached / failed).
   const [schemaV, setSchemaV] = useState(null)
+  // Send Media dropdown — opens a menu with explicit options
+  // (images / videos / first 5 / all) so the operator picks exactly
+  // what they want sent. Closes on outside-click via the useEffect
+  // below.
+  const [sendMenuOpen, setSendMenuOpen] = useState(false)
+  const sendMenuRef = useRef(null)
 
   const [tab, setTab]         = useState('All')
   const [query, setQuery]     = useState('')
@@ -351,6 +357,19 @@ export default function Delivery() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Close the Send Media dropdown on outside-click so it behaves like
+  // any other contextual menu — no overlay needed.
+  useEffect(() => {
+    if (!sendMenuOpen) return
+    function onDocClick(e) {
+      if (sendMenuRef.current && !sendMenuRef.current.contains(e.target)) {
+        setSendMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [sendMenuOpen])
+
   // Toast cleanup on unmount.
   useEffect(() => () => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
@@ -466,20 +485,17 @@ export default function Delivery() {
 
   // ---------- derived ----------
   const failedCount = counts.Failed
-  // Items the operator can still enqueue from this page. Includes:
-  //   * recipients with no delivery row yet
-  //   * recipients whose existing delivery is for ONE kind but the
-  //     OTHER kind also has a generated file on disk — clicking Send
-  //     Media now sends that second kind too (backend auto-picks the
-  //     un-enqueued kind to avoid colliding with the existing row).
-  const availableToSend = items.filter((r) => {
-    if (!r.delivery_id) return true
-    const stored = String(r.stored_media_kind || '').toLowerCase()
-    if (r.video && r.image && (stored === 'video' || stored === 'image')) {
-      return true
-    }
-    return false
-  }).length
+  // Per-kind pending counts. With the new (stem, kind) row shape every
+  // row carries a single media_kind, so we can count directly.
+  const pendingImages = items.filter(
+    (r) => (r.media_kind === 'image') && !r.delivery_id,
+  ).length
+  const pendingVideos = items.filter(
+    (r) => (r.media_kind === 'video') && !r.delivery_id,
+  ).length
+  // Total pending across both kinds — drives the dropdown button's
+  // count badge AND the disable state for the button.
+  const availableToSend = pendingImages + pendingVideos
 
   // Per-row helpers — read the BACKEND's live detection FIRST so the UI
   // is never out of sync with the filesystem. `detected_kind` /
@@ -541,20 +557,69 @@ export default function Delivery() {
               {worker?.alive ? '⏸ Pause worker' : '▶ Start worker'}
             </button>
 
-            {/* Send Media — one-click. Backend auto-picks image OR video
-                per recipient from WHATSAPP_MEDIA_KIND env preference; no
-                manual selection anywhere. */}
-            <button
-              type="button"
-              className="btn btn-secondary gen-banner-btn"
-              onClick={() => enqueueBatch(0, null, 'auto')}
-              disabled={sendDisabled}
-              title={availableToSend === 0
-                ? 'Every ready render already has a delivery record'
-                : `Send up to ${availableToSend} waiting ${availableToSend === 1 ? 'render' : 'renders'}`}
-            >
-              ➤ Send Media{availableToSend > 0 ? ` (${availableToSend})` : ''}
-            </button>
+            {/* Send Media dropdown — explicit options so the operator
+                picks exactly what to send instead of relying on auto-
+                mode. Counts beside each option reflect the live pending
+                rows so e.g. "Send all images (2)" tells you the
+                outcome before you click. */}
+            <div className="send-menu-wrap" ref={sendMenuRef}>
+              <button
+                type="button"
+                className="btn btn-secondary gen-banner-btn"
+                onClick={() => setSendMenuOpen((o) => !o)}
+                disabled={sendDisabled}
+                title={availableToSend === 0
+                  ? 'Every ready render already has a delivery record'
+                  : `Pick what to send — ${pendingImages} image${pendingImages === 1 ? '' : 's'} and ${pendingVideos} video${pendingVideos === 1 ? '' : 's'} waiting`}
+                aria-expanded={sendMenuOpen}
+                aria-haspopup="menu"
+              >
+                ➤ Send Media{availableToSend > 0 ? ` (${availableToSend})` : ''} ▾
+              </button>
+              {sendMenuOpen && (
+                <div className="send-menu" role="menu">
+                  <div className="send-menu-group">Images</div>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="send-menu-item"
+                    disabled={pendingImages === 0 || acting}
+                    onClick={() => { setSendMenuOpen(false); enqueueBatch(0, 'image', 'all images') }}
+                  >Send all images{pendingImages > 0 ? ` (${pendingImages})` : ''}</button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="send-menu-item"
+                    disabled={pendingImages === 0 || acting}
+                    onClick={() => { setSendMenuOpen(false); enqueueBatch(5, 'image', 'first 5 images') }}
+                  >Send first 5 images</button>
+                  <div className="send-menu-sep" />
+                  <div className="send-menu-group">Videos</div>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="send-menu-item"
+                    disabled={pendingVideos === 0 || acting}
+                    onClick={() => { setSendMenuOpen(false); enqueueBatch(0, 'video', 'all videos') }}
+                  >Send all videos{pendingVideos > 0 ? ` (${pendingVideos})` : ''}</button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="send-menu-item"
+                    disabled={pendingVideos === 0 || acting}
+                    onClick={() => { setSendMenuOpen(false); enqueueBatch(5, 'video', 'first 5 videos') }}
+                  >Send first 5 videos</button>
+                  <div className="send-menu-sep" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="send-menu-item"
+                    disabled={availableToSend === 0 || acting}
+                    onClick={() => { setSendMenuOpen(false); enqueueBatch(0, null, 'auto') }}
+                  >Send everything (auto-pick per recipient)</button>
+                </div>
+              )}
+            </div>
 
             <button
               type="button"
