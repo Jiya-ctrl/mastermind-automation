@@ -7,12 +7,6 @@ import { API_BASE, friendlyApiError } from '../config'
 const POLL_MS_ACTIVE = 1500
 const POLL_MS_IDLE   = 8000
 
-// Status filter chips. `Sending` is omitted because it's transient (the
-// brief moment between Queued and Meta accepting). `Pending Callback`
-// (the new non-failure state for "Meta accepted, awaiting webhook") and
-// `Read` (recipient opened) are first-class filters.
-const TABS = ['All', 'Queued', 'Awaiting Reply', 'Pending Callback', 'Media Sent', 'Delivered', 'Read', 'Failed']
-
 // Top-level media-kind filter — sits above the table and hides rows of
 // the opposite kind when set. Labels match the spec exactly.
 const MEDIA_FILTERS = [
@@ -96,7 +90,6 @@ export default function Delivery() {
   const [sendGap, setSendGap]         = useState(null)
   const [sendGapSaving, setSendGapSaving] = useState(false)
 
-  const [tab, setTab]         = useState('All')
   const [query, setQuery]     = useState('')
   // Top-level media-kind filter — All / Videos Generated / Images Generated.
   const [mediaKind, setMediaKind] = useState('all')
@@ -114,33 +107,9 @@ export default function Delivery() {
   const toastTimerRef = useRef(null)
 
   // Webhook diagnostics. Populated by polling /deliveries/webhook-status
-  // every 10 s while the page is mounted. Shape:
-  //   { callback_url, public_base_url, verify_token_present,
-  //     app_secret_present, provider,
-  //     last_callback: { received_at_ms, ip, wamid, meta_status, error,
-  //                      verify_at_ms } | null,
-  //     last_seen_public_base_url, tunnel_rotated }
-  const [webhookStatus, setWebhookStatus] = useState(null)
-  const whTimerRef = useRef(null)
-
-  // WhatsApp template config (drives whether sends use template flow or
-  // freeform). Shape on the wire:
-  //   { template_image, template_video, template_lang,
-  //     template_body_params: string[] }
-  // Plus `modes: { image, video }` for the human-readable summary.
-  // `tplDraft` mirrors the inputs while editing; `tplSaving` disables the
-  // Save button during the round-trip.
-  const [tplConfig, setTplConfig] = useState(null)
-  const [tplDraft,  setTplDraft]  = useState(null)
-  const [tplSaving, setTplSaving] = useState(false)
-  const [tplError,  setTplError]  = useState(null)
-
-  // Two-step diagnostics — polled every 8 s while the page is mounted.
-  // Surfaces flow state, prompt-template configured?, last inbound, last
-  // media-stage transition. Lets the operator see why a delivery is or
-  // isn't progressing without grepping the backend log.
-  const [diag, setDiag] = useState(null)
-  const diagTimerRef = useRef(null)
+  // (Webhook / template-config / diagnostics state removed — those
+  // panels were taken off the Delivery page to keep it focused on
+  // the queue + sending controls.)
 
   const timerRef = useRef(null)
 
@@ -212,69 +181,6 @@ export default function Delivery() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Webhook diagnostics polling — fixed 10 s cadence. Independent of the
-  // delivery-list cadence because tunnel rotations and Meta-callback
-  // arrivals happen on their own clock; we don't want them to ride the
-  // (potentially relaxed) idle delivery poll.
-  async function fetchWebhookStatus() {
-    try {
-      const res = await fetch(`${API_BASE}/deliveries/webhook-status`)
-      if (!res.ok) return
-      const data = await res.json()
-      if (data && typeof data === 'object') {
-        setWebhookStatus(data)
-      }
-    } catch {
-      // Silent — the panel just keeps showing the previous snapshot.
-    }
-  }
-
-  // Template config — fetched once on mount, then again after each save.
-  // No periodic poll: the value is operator-controlled (not externally
-  // mutated like webhook-status), so polling would be wasted requests.
-  async function fetchTemplateConfig() {
-    try {
-      const res = await fetch(`${API_BASE}/deliveries/template-config`)
-      if (!res.ok) return
-      const data = await res.json()
-      if (data && data.config) {
-        setTplConfig(data)
-        // Initialise the draft only if it hasn't been edited yet —
-        // otherwise we'd clobber in-progress operator typing on a re-fetch.
-        setTplDraft((prev) => prev ?? {
-          flow:                  data.config.flow                 || 'direct',
-          template_image:        data.config.template_image       || '',
-          template_video:        data.config.template_video       || '',
-          template_lang:         data.config.template_lang        || 'en',
-          template_body_params:  Array.isArray(data.config.template_body_params)
-            ? data.config.template_body_params.join(',')
-            : '',
-          prompt_template:       data.config.prompt_template      || '',
-          prompt_lang:           data.config.prompt_lang          || 'en',
-          prompt_body_params:    Array.isArray(data.config.prompt_body_params)
-            ? data.config.prompt_body_params.join(',')
-            : '',
-        })
-      }
-    } catch {
-      // Silent — the panel will show its previous snapshot.
-    }
-  }
-
-  // Two-step diagnostics fetcher. Cheap GET; we poll every 8 s so the
-  // operator sees inbound replies + state transitions land in near-real
-  // time without manually refreshing.
-  async function fetchDiagnostics() {
-    try {
-      const res = await fetch(`${API_BASE}/deliveries/diagnostics`)
-      if (!res.ok) return
-      const data = await res.json()
-      if (data && data.status === 'success') setDiag(data)
-    } catch {
-      // Silent — panel keeps its last snapshot.
-    }
-  }
-
   async function simulateReply(deliveryId) {
     if (!deliveryId) return
     try {
@@ -287,86 +193,16 @@ export default function Delivery() {
         return
       }
       showToast(`Simulated reply advanced ${data.advanced} row(s)`, 'success')
-      // Refresh both the deliveries table and diagnostics immediately
-      // so the operator sees the state transition without waiting for
-      // the next poll tick.
-      await Promise.all([fetchList(), fetchDiagnostics()])
+      await fetchList()
     } catch (e) {
       showToast(friendlyApiError(e), 'danger')
     }
   }
 
-  async function saveTemplateConfig() {
-    if (!tplDraft || tplSaving) return
-    setTplSaving(true)
-    setTplError(null)
-    try {
-      const body = {
-        flow:                 (tplDraft.flow || 'direct'),
-        template_image:       (tplDraft.template_image || '').trim(),
-        template_video:       (tplDraft.template_video || '').trim(),
-        template_lang:        (tplDraft.template_lang  || 'en').trim() || 'en',
-        // Backend accepts a single comma-separated string OR an array of
-        // strings; we send the comma string verbatim for simplicity.
-        template_body_params: (tplDraft.template_body_params || '').trim(),
-        prompt_template:      (tplDraft.prompt_template || '').trim(),
-        prompt_lang:          (tplDraft.prompt_lang     || 'en').trim() || 'en',
-        prompt_body_params:   (tplDraft.prompt_body_params || '').trim(),
-      }
-      const res = await fetch(`${API_BASE}/deliveries/template-config`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok || data.status !== 'success') {
-        throw new Error(data.error || `save failed (HTTP ${res.status})`)
-      }
-      showToast('Template config saved')
-      // Refresh the canonical config view from server.
-      setTplConfig({ ...data, modes: tplConfig?.modes })
-      await fetchTemplateConfig()
-    } catch (e) {
-      setTplError(friendlyApiError(e))
-    } finally {
-      setTplSaving(false)
-    }
-  }
-
-  useEffect(() => {
-    let cancelled = false
-    function tick() {
-      if (cancelled) return
-      whTimerRef.current = setTimeout(async () => {
-        if (cancelled) return
-        await fetchWebhookStatus()
-        if (cancelled) return
-        tick()
-      }, 10_000)
-    }
-    fetchWebhookStatus().then(() => { if (!cancelled) tick() })
-    // Template config: one-shot fetch on mount. No periodic poll — see
-    // fetchTemplateConfig for why.
-    fetchTemplateConfig()
-    // Diagnostics: poll every 8 s so inbound replies + media-stage
-    // transitions appear in the panel near-realtime.
-    function diagTick() {
-      if (cancelled) return
-      diagTimerRef.current = setTimeout(async () => {
-        if (cancelled) return
-        await fetchDiagnostics()
-        if (cancelled) return
-        diagTick()
-      }, 8000)
-    }
-    fetchDiagnostics().then(() => { if (!cancelled) diagTick() })
-    return () => {
-      cancelled = true
-      if (whTimerRef.current)   clearTimeout(whTimerRef.current)
-      if (diagTimerRef.current) clearTimeout(diagTimerRef.current)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // Webhook + template-config + diagnostics polling intentionally
+  // disabled. Those panels were removed from the UI to keep the
+  // Delivery page focused on the queue + sending controls; if they're
+  // needed again, restore from git history (commits before e47e343).
 
   // Close the Send Media dropdown on outside-click + recalc its
   // viewport position. The menu is portalled to document.body so the
@@ -593,7 +429,6 @@ export default function Delivery() {
   }
 
   const rows = useMemo(() => items.filter((r) => {
-    if (tab !== 'All' && r.status !== tab) return false
     if (mediaKind !== 'all' && rowMediaKind(r) !== mediaKind) return false
     if (!query) return true
     const q = query.toLowerCase()
@@ -603,7 +438,7 @@ export default function Delivery() {
       r.video_filename || '', r.image_filename || '',
     ]
     return haystack.some((s) => s.toLowerCase().includes(q))
-  }), [items, tab, query, mediaKind])  // eslint-disable-line react-hooks/exhaustive-deps
+  }), [items, query, mediaKind])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendDisabled = acting || availableToSend === 0
   const retryDisabled = acting || failedCount === 0
@@ -737,21 +572,6 @@ export default function Delivery() {
       />
 
 
-      {webhookStatus?.tunnel_rotated && (
-        <div className="dlv-tunnel-banner" role="alert">
-          <span aria-hidden="true">⚠️</span>
-          <div className="dlv-tunnel-banner-text">
-            <strong>Webhook URL changed</strong>
-            <span>
-              Public base URL has rotated since the last callback. Update Meta's
-              webhook configuration to{' '}
-              <code>{webhookStatus.callback_url || '—'}</code>{' '}
-              or callbacks will stop arriving.
-            </span>
-          </div>
-        </div>
-      )}
-
       {error && (
         <div className="tmpl-error" role="alert">
           <span aria-hidden="true">⚠️</span> {error}
@@ -776,14 +596,17 @@ export default function Delivery() {
 
       <section className="card">
         <div className="card-head row">
-          <div className="filter-pills">
-            {TABS.map((t) => (
+          {/* Media-kind filter (All / Videos / Images) + search.
+              The verbose status-chip row was removed — the KPI cards
+              above already break the queue down by status. */}
+          <div className="dlv-kind-filter">
+            {MEDIA_FILTERS.map((k) => (
               <button
-                key={t}
+                key={k.id}
                 type="button"
-                className={`filter-pill${tab === t ? ' filter-pill-active' : ''}`}
-                onClick={() => setTab(t)}
-              >{t}</button>
+                className={`filter-pill${mediaKind === k.id ? ' filter-pill-active' : ''}`}
+                onClick={() => setMediaKind(k.id)}
+              >{k.label}</button>
             ))}
           </div>
           <div className="search search-inline">
@@ -795,20 +618,6 @@ export default function Delivery() {
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
-        </div>
-
-        {/* Top-level media-kind filter — All / Videos Generated / Images
-            Generated. Sits BETWEEN status chips and the table so it's
-            visually separate from the status filter. */}
-        <div className="dlv-kind-filter">
-          {MEDIA_FILTERS.map((k) => (
-            <button
-              key={k.id}
-              type="button"
-              className={`filter-pill${mediaKind === k.id ? ' filter-pill-active' : ''}`}
-              onClick={() => setMediaKind(k.id)}
-            >{k.label}</button>
-          ))}
         </div>
 
         <div className="table-wrap">
@@ -942,445 +751,6 @@ export default function Delivery() {
         </div>
       </section>
 
-      {webhookStatus && (
-        <section className="card dlv-webhook-panel">
-          <header className="dlv-webhook-panel-head">
-            <h3>Webhook Status</h3>
-            <span className="dlv-webhook-panel-sub">
-              Diagnostics for Meta → backend callbacks. Polled every 10 s.
-            </span>
-          </header>
-          <div className="dlv-webhook-grid">
-            <div className="dlv-webhook-cell">
-              <div className="dlv-webhook-label">Last callback</div>
-              <div className="dlv-webhook-value">
-                {webhookStatus.last_callback?.received_at_ms
-                  ? formatRelative(webhookStatus.last_callback.received_at_ms)
-                  : <span className="cell-faint">no callbacks yet</span>}
-              </div>
-              {webhookStatus.last_callback?.meta_status && (
-                <div className="dlv-webhook-sub">
-                  Meta status: <code>{webhookStatus.last_callback.meta_status}</code>
-                </div>
-              )}
-            </div>
-
-            <div className="dlv-webhook-cell">
-              <div className="dlv-webhook-label">Last webhook IP</div>
-              <div className="dlv-webhook-value">
-                {webhookStatus.last_callback?.ip
-                  ? <code>{webhookStatus.last_callback.ip}</code>
-                  : <span className="cell-faint">—</span>}
-              </div>
-              {webhookStatus.last_callback?.wamid && (
-                <div className="dlv-webhook-sub" title={webhookStatus.last_callback.wamid}>
-                  wamid: <code>{webhookStatus.last_callback.wamid.slice(0, 24)}…</code>
-                </div>
-              )}
-            </div>
-
-            <div className="dlv-webhook-cell">
-              <div className="dlv-webhook-label">Last verify (GET hub.challenge)</div>
-              <div className="dlv-webhook-value">
-                {webhookStatus.last_callback?.verify_at_ms
-                  ? formatRelative(webhookStatus.last_callback.verify_at_ms)
-                  : <span className="cell-faint">never</span>}
-              </div>
-              <div className="dlv-webhook-sub">
-                Verify token: {webhookStatus.verify_token_present
-                  ? <span className="dlv-webhook-ok">✓ configured</span>
-                  : <span className="dlv-webhook-bad">✗ missing</span>}
-                {' · '}
-                App secret: {webhookStatus.app_secret_present
-                  ? <span className="dlv-webhook-ok">✓ configured</span>
-                  : <span className="dlv-webhook-bad">✗ missing</span>}
-              </div>
-            </div>
-
-            <div className="dlv-webhook-cell dlv-webhook-cell-wide">
-              <div className="dlv-webhook-label">Public base URL</div>
-              <div className="dlv-webhook-value">
-                {webhookStatus.public_base_url
-                  ? <code>{webhookStatus.public_base_url}</code>
-                  : <span className="cell-faint">not configured</span>}
-              </div>
-              <div className="dlv-webhook-sub">
-                Callback path:{' '}
-                <code>{webhookStatus.callback_url || '—'}</code>
-              </div>
-            </div>
-          </div>
-
-          {webhookStatus.last_callback?.error && (
-            <div className="dlv-webhook-error" title={webhookStatus.last_callback.error}>
-              <span aria-hidden="true">⚠️</span>
-              Last callback reported an error: <code>{webhookStatus.last_callback.error}</code>
-            </div>
-          )}
-        </section>
-      )}
-
-      {tplDraft && (
-        <section className="card dlv-tpl-panel">
-          <header className="dlv-webhook-panel-head">
-            <h3>
-              WhatsApp Template &amp; Flow
-              <span className={`dlv-flow-chip dlv-flow-chip-${tplConfig?.config?.flow === 'two-step' ? 'twostep' : 'direct'}`}>
-                Active: {tplConfig?.config?.flow === 'two-step' ? 'Two-step engagement' : 'Direct'}
-              </span>
-            </h3>
-            <span className="dlv-webhook-panel-sub">
-              Choose the engagement flow + the approved Meta templates each stage ships. <strong>Two-step</strong> opens the 24-hour window with a text prompt before sending media; <strong>direct</strong> sends the media template up-front.
-            </span>
-          </header>
-
-          {tplDraft.flow === 'two-step' && (
-            <div className="dlv-twostep-explain" role="note">
-              <div className="dlv-twostep-step">
-                <span className="dlv-twostep-num">1</span>
-                <div>
-                  <div className="dlv-twostep-step-title">Send prompt</div>
-                  <div className="dlv-twostep-step-sub">Ship the approved text-only template asking the recipient to reply.</div>
-                </div>
-              </div>
-              <div className="dlv-twostep-arrow" aria-hidden="true">→</div>
-              <div className="dlv-twostep-step">
-                <span className="dlv-twostep-num">2</span>
-                <div>
-                  <div className="dlv-twostep-step-title">Wait for reply</div>
-                  <div className="dlv-twostep-step-sub">Their inbound message opens Meta's 24-hour customer-service window.</div>
-                </div>
-              </div>
-              <div className="dlv-twostep-arrow" aria-hidden="true">→</div>
-              <div className="dlv-twostep-step">
-                <span className="dlv-twostep-num">3</span>
-                <div>
-                  <div className="dlv-twostep-step-title">Auto-send media</div>
-                  <div className="dlv-twostep-step-sub">Worker automatically ships the personalised image/video as freeform.</div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="dlv-flow-toggle" role="radiogroup" aria-label="Delivery flow">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={tplDraft.flow === 'direct'}
-              className={`dlv-flow-opt${tplDraft.flow === 'direct' ? ' dlv-flow-opt-active' : ''}`}
-              onClick={() => {
-                // Immediately persist the flow change so the backend
-                // switches behaviour even before the operator hits Save.
-                setTplDraft({ ...tplDraft, flow: 'direct' })
-                fetch(`${API_BASE}/deliveries/template-config`, {
-                  method:  'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body:    JSON.stringify({ flow: 'direct' }),
-                }).then(fetchTemplateConfig).then(fetchDiagnostics).catch(() => {})
-              }}
-            >
-              <span className="dlv-flow-opt-title">Direct</span>
-              <span className="dlv-flow-opt-sub">Media template up-front. Subject to Meta marketing filters.</span>
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={tplDraft.flow === 'two-step'}
-              className={`dlv-flow-opt${tplDraft.flow === 'two-step' ? ' dlv-flow-opt-active' : ''}`}
-              onClick={() => {
-                setTplDraft({ ...tplDraft, flow: 'two-step' })
-                fetch(`${API_BASE}/deliveries/template-config`, {
-                  method:  'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body:    JSON.stringify({ flow: 'two-step' }),
-                }).then(fetchTemplateConfig).then(fetchDiagnostics).catch(() => {})
-              }}
-            >
-              <span className="dlv-flow-opt-title">Two-step engagement</span>
-              <span className="dlv-flow-opt-sub">Text prompt → recipient replies → media inside 24h window.</span>
-            </button>
-          </div>
-
-          {tplDraft.flow === 'two-step' && (
-            <div className="dlv-tpl-grid dlv-tpl-grid-stage">
-              <div className="dlv-tpl-stage-head">Stage 1 — Prompt template (text only)</div>
-
-              <label className="dlv-tpl-field dlv-tpl-field-wide">
-                <span className="dlv-tpl-label">Prompt template name</span>
-                <input
-                  type="text"
-                  className="dlv-tpl-input"
-                  placeholder="promo_media_update_prompt"
-                  value={tplDraft.prompt_template}
-                  onChange={(e) => setTplDraft({ ...tplDraft, prompt_template: e.target.value })}
-                  spellCheck={false}
-                  autoComplete="off"
-                />
-                <span className="dlv-tpl-hint">
-                  Approved <strong>text-only</strong> template that asks the recipient to reply, e.g.{' '}
-                  <em>“Hi {'{{1}}'}, your personalised Abacus media is ready 😊 Reply YES to receive it.”</em>
-                </span>
-              </label>
-
-              <label className="dlv-tpl-field">
-                <span className="dlv-tpl-label">Prompt language</span>
-                <input
-                  type="text"
-                  className="dlv-tpl-input"
-                  placeholder="en"
-                  value={tplDraft.prompt_lang}
-                  onChange={(e) => setTplDraft({ ...tplDraft, prompt_lang: e.target.value })}
-                  spellCheck={false}
-                  autoComplete="off"
-                />
-                <span className="dlv-tpl-hint">Language code registered for the prompt template.</span>
-              </label>
-
-              <label className="dlv-tpl-field">
-                <span className="dlv-tpl-label">Prompt body parameters</span>
-                <input
-                  type="text"
-                  className="dlv-tpl-input"
-                  placeholder="{name}"
-                  value={tplDraft.prompt_body_params}
-                  onChange={(e) => setTplDraft({ ...tplDraft, prompt_body_params: e.target.value })}
-                  spellCheck={false}
-                  autoComplete="off"
-                />
-                <span className="dlv-tpl-hint">
-                  One per <code>{'{{n}}'}</code> placeholder. Keys: <code>{'{name}'}</code> <code>{'{address}'}</code> <code>{'{phone}'}</code>.
-                </span>
-              </label>
-            </div>
-          )}
-
-          <div className="dlv-tpl-grid dlv-tpl-grid-stage">
-            <div className="dlv-tpl-stage-head">
-              {tplDraft.flow === 'two-step' ? 'Stage 2 — Personalised media (sent after reply)' : 'Media template'}
-            </div>
-
-            <label className="dlv-tpl-field">
-              <span className="dlv-tpl-label">Image template</span>
-              <input
-                type="text"
-                className="dlv-tpl-input"
-                placeholder="promo_media_update"
-                value={tplDraft.template_image}
-                onChange={(e) => setTplDraft({ ...tplDraft, template_image: e.target.value })}
-                spellCheck={false}
-                autoComplete="off"
-              />
-              <span className="dlv-tpl-hint">
-                Name of the approved template with an IMAGE header.
-              </span>
-            </label>
-
-            <label className="dlv-tpl-field">
-              <span className="dlv-tpl-label">Video template</span>
-              <input
-                type="text"
-                className="dlv-tpl-input"
-                placeholder="promo_media_update"
-                value={tplDraft.template_video}
-                onChange={(e) => setTplDraft({ ...tplDraft, template_video: e.target.value })}
-                spellCheck={false}
-                autoComplete="off"
-              />
-              <span className="dlv-tpl-hint">
-                Name of the approved template with a VIDEO header. Can be the same as image if your template accepts both header types.
-              </span>
-            </label>
-
-            <label className="dlv-tpl-field">
-              <span className="dlv-tpl-label">Language code</span>
-              <input
-                type="text"
-                className="dlv-tpl-input"
-                placeholder="en"
-                value={tplDraft.template_lang}
-                onChange={(e) => setTplDraft({ ...tplDraft, template_lang: e.target.value })}
-                spellCheck={false}
-                autoComplete="off"
-              />
-              <span className="dlv-tpl-hint">
-                Must match the language the template was registered under in WhatsApp Manager.
-              </span>
-            </label>
-
-            <label className="dlv-tpl-field dlv-tpl-field-wide">
-              <span className="dlv-tpl-label">Body parameters</span>
-              <input
-                type="text"
-                className="dlv-tpl-input"
-                placeholder="{name},{address}"
-                value={tplDraft.template_body_params}
-                onChange={(e) => setTplDraft({ ...tplDraft, template_body_params: e.target.value })}
-                spellCheck={false}
-                autoComplete="off"
-              />
-              <span className="dlv-tpl-hint">
-                Comma-separated, one per <code>{'{{n}}'}</code> placeholder. Available keys:{' '}
-                <code>{'{name}'}</code> <code>{'{address}'}</code> <code>{'{phone}'}</code>. Leave empty if your template has no body variables.
-              </span>
-            </label>
-          </div>
-
-          <div className="dlv-tpl-row">
-            <div className="dlv-tpl-modes">
-              <span className="dlv-tpl-label">Active send modes</span>
-              <span className="dlv-tpl-mode">
-                Image: <code>{tplConfig?.modes?.image || '—'}</code>
-              </span>
-              <span className="dlv-tpl-mode">
-                Video: <code>{tplConfig?.modes?.video || '—'}</code>
-              </span>
-              {tplConfig?.modes && (tplConfig.modes.image === 'freeform' || tplConfig.modes.video === 'freeform') && (
-                <span className="dlv-tpl-warn">
-                  ⚠ A kind is in freeform mode — Meta will reject sends to cold recipients.
-                </span>
-              )}
-            </div>
-            <button
-              type="button"
-              className="btn btn-brand"
-              onClick={saveTemplateConfig}
-              disabled={tplSaving}
-            >
-              {tplSaving ? 'Saving…' : 'Save template config'}
-            </button>
-          </div>
-
-          {tplError && (
-            <div className="dlv-webhook-error" role="alert">
-              <span aria-hidden="true">⚠️</span> {tplError}
-            </div>
-          )}
-        </section>
-      )}
-
-      {diag && (
-        <section className="card dlv-tpl-panel dlv-diag-panel">
-          <header className="dlv-webhook-panel-head">
-            <h3>
-              Two-step Diagnostics
-              <span className={`dlv-flow-chip dlv-flow-chip-${diag.flow === 'two-step' ? 'twostep' : 'direct'}`}>
-                Flow: {diag.flow}
-              </span>
-            </h3>
-            <span className="dlv-webhook-panel-sub">
-              Live snapshot of the two-step engagement flow. Polled every 8&nbsp;s.
-            </span>
-          </header>
-
-          <div className="dlv-diag-grid">
-            <div className="dlv-diag-cell">
-              <div className="dlv-tpl-label">Current flow</div>
-              <div className="dlv-diag-value">{diag.flow}</div>
-            </div>
-            <div className="dlv-diag-cell">
-              <div className="dlv-tpl-label">Prompt template configured</div>
-              <div className="dlv-diag-value">
-                {diag.prompt_configured
-                  ? <span className="dlv-diag-ok">✓ {diag.prompt_template}</span>
-                  : <span className="dlv-diag-bad">✗ not set</span>}
-              </div>
-            </div>
-            <div className="dlv-diag-cell">
-              <div className="dlv-tpl-label">Webhook <code>messages</code> subscription</div>
-              <div className="dlv-diag-value">
-                {diag.messages_subscription_detected
-                  ? <span className="dlv-diag-ok">✓ detected (inbound received)</span>
-                  : <span className="dlv-diag-warn">? unknown — no inbound yet at current callback URL</span>}
-              </div>
-            </div>
-            <div className="dlv-diag-cell">
-              <div className="dlv-tpl-label">Awaiting Reply / Media in flight</div>
-              <div className="dlv-diag-value">
-                <code>{diag.two_step_counts?.awaiting_reply ?? 0}</code> awaiting
-                {' · '}
-                <code>{diag.two_step_counts?.media_in_flight ?? 0}</code> in flight
-              </div>
-            </div>
-
-            <div className="dlv-diag-cell dlv-diag-cell-wide">
-              <div className="dlv-tpl-label">Last inbound reply</div>
-              <div className="dlv-diag-value">
-                {diag.last_inbound
-                  ? (
-                      <span>
-                        <code>{diag.last_inbound.digits || diag.last_inbound.phone}</code> · {diag.last_inbound.msg_type}
-                        {diag.last_inbound.preview ? <> · <em>{diag.last_inbound.preview}</em></> : null}
-                        {' · '}{formatRelative(diag.last_inbound.at_ms)}
-                        {diag.last_inbound.simulated && <span className="dlv-diag-sim"> (simulated)</span>}
-                      </span>
-                    )
-                  : <span className="cell-faint">no inbound message received yet</span>}
-              </div>
-            </div>
-
-            <div className="dlv-diag-cell dlv-diag-cell-wide">
-              <div className="dlv-tpl-label">Last media-stage transition</div>
-              <div className="dlv-diag-value">
-                {diag.last_media_transition
-                  ? (
-                      <span>
-                        <code>{diag.last_media_transition.delivery_id}</code> · {diag.last_media_transition.phone}
-                        {' · '}{formatRelative(diag.last_media_transition.at_ms)}
-                      </span>
-                    )
-                  : <span className="cell-faint">none yet — no row has advanced past Awaiting Reply</span>}
-              </div>
-            </div>
-
-            <div className="dlv-diag-cell">
-              <div className="dlv-tpl-label">Last prompt send</div>
-              <div className="dlv-diag-value">
-                {diag.last_prompt_send
-                  ? (
-                      <span>
-                        {diag.last_prompt_send.ok ? '✓' : '✗'} {diag.last_prompt_send.delivery_id}
-                        {' · '}{formatRelative(diag.last_prompt_send.at_ms)}
-                        {diag.last_prompt_send.error
-                          ? <div className="dlv-diag-err">{diag.last_prompt_send.error}</div>
-                          : null}
-                      </span>
-                    )
-                  : <span className="cell-faint">none</span>}
-              </div>
-            </div>
-            <div className="dlv-diag-cell">
-              <div className="dlv-tpl-label">Last media send</div>
-              <div className="dlv-diag-value">
-                {diag.last_media_send
-                  ? (
-                      <span>
-                        {diag.last_media_send.ok ? '✓' : '✗'} {diag.last_media_send.delivery_id}
-                        {' · '}<code>{diag.last_media_send.mode || '?'}</code>
-                        {' · '}{formatRelative(diag.last_media_send.at_ms)}
-                        {diag.last_media_send.error
-                          ? <div className="dlv-diag-err">{diag.last_media_send.error}</div>
-                          : null}
-                      </span>
-                    )
-                  : <span className="cell-faint">none</span>}
-              </div>
-            </div>
-            <div className="dlv-diag-cell">
-              <div className="dlv-tpl-label">Last media delivered (per webhook)</div>
-              <div className="dlv-diag-value">
-                {diag.last_media_delivered
-                  ? (
-                      <span>
-                        ✓ {diag.last_media_delivered.delivery_id}
-                        {' · '}{formatRelative(diag.last_media_delivered.at_ms)}
-                      </span>
-                    )
-                  : <span className="cell-faint">none</span>}
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
 
       {toast && createPortal(
         <div className={`gen-toast gen-toast-${toast.kind}`} role="status" aria-live="polite">
