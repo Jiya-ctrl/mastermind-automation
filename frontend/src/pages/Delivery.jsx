@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { createPortal } from 'react-dom'
 import PageHeader from '../components/PageHeader'
 
 import { API_BASE, friendlyApiError } from '../config'
