@@ -16632,6 +16632,39 @@ select.pstyle-input { cursor: pointer; }
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
   font-size: 12.5px;
   font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms, border-color 140ms, transform 80ms;
+}
+.status-strip-chip:hover {
+  border-color: rgba(15, 23, 42, 0.16);
+  background: #FAFAF6;
+}
+.status-strip-chip:active { transform: scale(0.97); }
+.status-strip-chip-active {
+  background: #0B1C30;
+  border-color: #0B1C30;
+}
+.status-strip-chip-active .status-strip-label,
+.status-strip-chip-active .status-strip-value { color: #FFFFFF !important; }
+.status-strip-chip-success.status-strip-chip-active {
+  background: #047857;
+  border-color: #047857;
+}
+.status-strip-chip-warning.status-strip-chip-active {
+  background: #B45309;
+  border-color: #B45309;
+}
+.status-strip-chip-danger.status-strip-chip-active {
+  background: #B91C1C;
+  border-color: #B91C1C;
+}
+.status-strip-chip-muted.status-strip-chip-active {
+  background: #4B5563;
+  border-color: #4B5563;
+}
+.status-strip-chip-all.status-strip-chip-active {
+  background: #F97316;
+  border-color: #F97316;
 }
 .status-strip-label {
   color: #584237;

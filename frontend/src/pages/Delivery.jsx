@@ -93,6 +93,9 @@ export default function Delivery() {
   const [query, setQuery]     = useState('')
   // Top-level media-kind filter — All / Videos Generated / Images Generated.
   const [mediaKind, setMediaKind] = useState('all')
+  // Status filter — driven by clicking a chip in the status strip below.
+  // null = no filter (show all rows); otherwise the exact status string.
+  const [statusFilter, setStatusFilter] = useState(null)
 
   // 'acting' disables bulk buttons while a server call is in flight so the
   // user cannot double-click into a duplicate retry / enqueue.
@@ -430,6 +433,7 @@ export default function Delivery() {
 
   const rows = useMemo(() => items.filter((r) => {
     if (mediaKind !== 'all' && rowMediaKind(r) !== mediaKind) return false
+    if (statusFilter && r.status !== statusFilter) return false
     if (!query) return true
     const q = query.toLowerCase()
     const haystack = [
@@ -438,7 +442,7 @@ export default function Delivery() {
       r.video_filename || '', r.image_filename || '',
     ]
     return haystack.some((s) => s.toLowerCase().includes(q))
-  }), [items, query, mediaKind])  // eslint-disable-line react-hooks/exhaustive-deps
+  }), [items, query, mediaKind, statusFilter])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendDisabled = acting || availableToSend === 0
   const retryDisabled = acting || failedCount === 0
@@ -579,10 +583,19 @@ export default function Delivery() {
       )}
 
       {/* Compact one-line status strip — replaces the 6-card KPI grid
-          (it was eating too much vertical space for numbers that are
-          mostly zero on a quiet queue). Each chip is colour-toned so
-          the eye still catches Failed / Delivered without scanning. */}
+          AND the old chip-row filter. Each chip is now a TOGGLE: click
+          one to filter the table to that status, click again (or the
+          "All" chip) to clear. Colour tones still distinguish Failed /
+          Delivered etc. at a glance. */}
       <div className="status-strip">
+        <button
+          type="button"
+          className={`status-strip-chip status-strip-chip-all${statusFilter === null ? ' status-strip-chip-active' : ''}`}
+          onClick={() => setStatusFilter(null)}
+        >
+          <span className="status-strip-label">All</span>
+          <span className="status-strip-value">{items.length}</span>
+        </button>
         {[
           { label: 'Delivered',      value: counts.Delivered,               tone: 'success' },
           { label: 'Media Sent',     value: counts['Media Sent']     || 0,  tone: 'success' },
@@ -590,12 +603,21 @@ export default function Delivery() {
           { label: 'Sending',        value: counts.Sending,                 tone: 'warning' },
           { label: 'Queued',         value: counts.Queued,                  tone: 'muted'   },
           { label: 'Failed',         value: counts.Failed,                  tone: 'danger'  },
-        ].map((s) => (
-          <span key={s.label} className={`status-strip-chip status-strip-chip-${s.tone}`}>
-            <span className="status-strip-label">{s.label}</span>
-            <span className="status-strip-value">{s.value}</span>
-          </span>
-        ))}
+        ].map((s) => {
+          const active = statusFilter === s.label
+          return (
+            <button
+              key={s.label}
+              type="button"
+              className={`status-strip-chip status-strip-chip-${s.tone}${active ? ' status-strip-chip-active' : ''}`}
+              onClick={() => setStatusFilter(active ? null : s.label)}
+              title={active ? `Showing ${s.label} only — click again to clear` : `Filter to ${s.label}`}
+            >
+              <span className="status-strip-label">{s.label}</span>
+              <span className="status-strip-value">{s.value}</span>
+            </button>
+          )
+        })}
       </div>
 
       <section className="card">
