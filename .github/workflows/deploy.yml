@@ -26,6 +26,8 @@ concurrency:
 # the old 60s because Hostinger's SSH listener occasionally takes >60s
 # to accept a connection from GitHub Actions runner IPs (we saw two
 # identical 1m 7s i/o-timeout failures with the default).
+# Backoffs between attempts widened (45s, 120s) so a fail2ban block
+# triggered by burst pushes has time to expire before the next try.
 env:
   SSH_TIMEOUT: 180s
   CMD_TIMEOUT: 12m
@@ -67,11 +69,11 @@ jobs:
             echo "==> Deploy complete (attempt 1)."
 
       # ---------- Attempt 2 (only if attempt 1 failed) ------------------
-      - name: Wait 25s before retry
+      - name: Wait 45s before retry
         if: steps.try1.outcome == 'failure'
         run: |
-          echo "Attempt 1 failed (likely Hostinger SSH transient timeout). Backing off 25s before retry."
-          sleep 25
+          echo "Attempt 1 failed (likely Hostinger SSH transient timeout or fail2ban block). Backing off 45s before retry."
+          sleep 45
 
       - name: Deploy attempt 2 of 3
         id: try2
@@ -96,11 +98,11 @@ jobs:
             echo "==> Deploy complete (attempt 2)."
 
       # ---------- Attempt 3 (final — failure here fails the workflow) ---
-      - name: Wait 50s before final retry
+      - name: Wait 120s before final retry
         if: steps.try1.outcome == 'failure' && steps.try2.outcome == 'failure'
         run: |
-          echo "Attempt 2 also failed. Final 50s backoff before last try."
-          sleep 50
+          echo "Attempt 2 also failed. Final 120s backoff (covers most fail2ban windows) before last try."
+          sleep 120
 
       - name: Deploy attempt 3 of 3
         if: steps.try1.outcome == 'failure' && steps.try2.outcome == 'failure'
