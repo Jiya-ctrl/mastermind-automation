@@ -578,19 +578,23 @@ export default function Delivery() {
         </div>
       )}
 
-      <div className="status-summary">
+      {/* Compact one-line status strip — replaces the 6-card KPI grid
+          (it was eating too much vertical space for numbers that are
+          mostly zero on a quiet queue). Each chip is colour-toned so
+          the eye still catches Failed / Delivered without scanning. */}
+      <div className="status-strip">
         {[
-          { label: 'Delivered',       value: counts.Delivered,                tone: 'success' },
-          { label: 'Media Sent',      value: counts['Media Sent']      || 0,  tone: 'success' },
-          { label: 'Awaiting Reply',  value: counts['Awaiting Reply']  || 0,  tone: 'warning' },
-          { label: 'Sending',         value: counts.Sending,                  tone: 'warning' },
-          { label: 'Queued',          value: counts.Queued,                   tone: 'muted'   },
-          { label: 'Failed',          value: counts.Failed,                   tone: 'danger'  },
+          { label: 'Delivered',      value: counts.Delivered,               tone: 'success' },
+          { label: 'Media Sent',     value: counts['Media Sent']     || 0,  tone: 'success' },
+          { label: 'Awaiting Reply', value: counts['Awaiting Reply'] || 0,  tone: 'warning' },
+          { label: 'Sending',        value: counts.Sending,                 tone: 'warning' },
+          { label: 'Queued',         value: counts.Queued,                  tone: 'muted'   },
+          { label: 'Failed',         value: counts.Failed,                  tone: 'danger'  },
         ].map((s) => (
-          <section key={s.label} className={`card status-summary-card status-summary-${s.tone}`}>
-            <div className="analytics-label">{s.label}</div>
-            <div className="analytics-value">{s.value}</div>
-          </section>
+          <span key={s.label} className={`status-strip-chip status-strip-chip-${s.tone}`}>
+            <span className="status-strip-label">{s.label}</span>
+            <span className="status-strip-value">{s.value}</span>
+          </span>
         ))}
       </div>
 
