@@ -619,19 +619,9 @@ export default function Delivery() {
         }
         actions={
           <>
-            <button
-              type="button"
-              className="btn btn-secondary gen-banner-btn"
-              onClick={toggleWorker}
-              disabled={!worker || acting}
-              title={worker?.alive ? 'Pause the delivery worker' : 'Resume the delivery worker'}
-            >
-              {worker?.alive ? '⏸ Pause worker' : '▶ Start worker'}
-            </button>
-
             {/* Inline send-gap stepper — same backend knob as the
                 Settings page so changes here propagate. Compact 3-button
-                layout to fit alongside Pause/Send/Retry. */}
+                layout to fit alongside Send/Retry. */}
             <div className="send-gap-inline" title="Seconds between consecutive sends (Meta-friendly pacing)">
               <span className="send-gap-inline-label">Gap</span>
               <button

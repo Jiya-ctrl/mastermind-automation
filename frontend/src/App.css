@@ -16583,20 +16583,33 @@ select.pstyle-input { cursor: pointer; }
   position: relative;
   display: inline-block;
 }
-.send-menu {
+/* Portalled to <body> so the page-banner's overflow:hidden cannot
+   clip the menu. position/z-index forced via !important + inline
+   style on the element so no parent rule can flatten the menu. */
+.send-menu-portal {
+  position: fixed !important;
+  z-index: 99999 !important;
   min-width: 280px;
+  max-width: 360px;
   padding: 8px;
   background: #FFFFFF;
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  color: #0B1C30;
+  border: 1px solid rgba(15, 23, 42, 0.10);
   border-radius: 12px;
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
-  z-index: 1500;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.20);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Hard-anchor the menu inside the viewport even if the calculated
+     top/right would push part of it off-screen. */
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
 }
-/* Portalled to <body> so the page-banner's overflow:hidden cannot
-   clip the menu. Position is calculated from the trigger button's
-   getBoundingClientRect (top/right) in the page component. */
-.send-menu-portal {
-  position: fixed;
+[data-theme="dark"] .send-menu-portal {
+  background: #211D1A;
+  color: #F5F1EB;
+  border-color: rgba(255, 255, 255, 0.10);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
 }
 
 /* Inline send-gap stepper (Delivery page page-banner) */
