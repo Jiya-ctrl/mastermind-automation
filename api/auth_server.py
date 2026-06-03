@@ -611,21 +611,24 @@ def auth_reset_password():
     if time.time() > entry["expires_at"]:
         return jsonify({"ok": False, "error": "invalid_token"}), 400
 
-    # Rotate BOTH password and recovery key — the recovery key just got
-    # used, so it's burned (no permanent backdoor). We hand the new key
-    # back in the response ONCE; the operator must write it down before
-    # closing the success screen. There is no way to retrieve it later
-    # without using the still-active session to roll it again.
+    # Operator preference: the recovery key is PERMANENT — set once at
+    # setup and never rotated. The reset token expires after 5 min and
+    # is single-use (popped from _RESET_TOKENS above), so a leaked
+    # recovery key only opens a 5-minute window before re-verification
+    # is required again. The original rotation behaviour was here to
+    # burn the key after every use, but the workflow cost (operator
+    # having to record a new key every routine password change) wasn't
+    # worth the marginal hardening.
     with _STORE_LOCK:
         data = _read_store() or _seed_store()
-        new_recovery_key = _rotate_recovery_key(data)
-        # Save password change in the same write to keep the store atomic.
+        # Save password change atomically — recovery key fields are
+        # left untouched.
         pw_salt = secrets.token_hex(16)
         data["password_hash"] = _hash_credential(new_password, pw_salt)
         data["password_salt"] = pw_salt
         data["updated_at"]    = int(time.time())
         _write_store(data)
-    log.info("AUTH: ✅ password reset for %s (old hash discarded, recovery key rotated)", entry["user_id"])
+    log.info("AUTH: ✅ password reset for %s (recovery key preserved)", entry["user_id"])
     # Issue a fresh session token so the user can land straight on the
     # dashboard after a recovery reset without re-typing the new password.
     token, expires_at = _session.mint_token(entry["user_id"])
@@ -634,9 +637,6 @@ def auth_reset_password():
         "session_token":      token,
         "session_expires_at": expires_at * 1000,
         "user_id":            entry["user_id"],
-        # Operator MUST save this — the old key is now invalid and this is
-        # the only time the plaintext leaves the server.
-        "new_recovery_key":   new_recovery_key,
     })
 
 
