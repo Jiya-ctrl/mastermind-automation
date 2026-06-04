@@ -3464,6 +3464,41 @@ def deliveries_clear():
     return jsonify({"status": "success"})
 
 
+@app.route("/deliveries/delete", methods=["POST"])
+def deliveries_delete():
+    """Delete specific delivery rows by id. Body: {ids: [<id>, ...]}.
+    Used by the Delivery page's per-row trash icon + bulk-select toolbar.
+    Rows that are currently Sending are skipped (deleting under the worker
+    is unsafe); the response reports which ids actually got removed."""
+    payload  = request.get_json(silent=True) or {}
+    raw_ids  = payload.get("ids") or []
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return jsonify({"status": "error", "error": "ids must be a non-empty array"}), 400
+    targets = {str(x) for x in raw_ids if x}
+    removed, skipped = [], []
+    with _DELIVERIES_LOCK:
+        doc = _load_deliveries()
+        kept = []
+        for d in doc.get("items", []):
+            did = str(d.get("id") or "")
+            if did in targets:
+                if (d.get("status") or "") == "Sending":
+                    skipped.append({"id": did, "reason": "in-flight"})
+                    kept.append(d)
+                else:
+                    removed.append(did)
+                continue
+            kept.append(d)
+        doc["items"] = kept
+        _save_deliveries(doc)
+    _delivery_log("INFO", "deliveries deleted", removed=len(removed), skipped=len(skipped))
+    return jsonify({
+        "status":  "success",
+        "removed": removed,
+        "skipped": skipped,
+    })
+
+
 @app.route("/deliveries/worker", methods=["GET"])
 def deliveries_worker_status():
     return jsonify({"status": "success", "worker": _worker_status()})

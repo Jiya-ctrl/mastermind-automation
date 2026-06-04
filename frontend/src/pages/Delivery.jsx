@@ -376,6 +376,50 @@ export default function Delivery() {
     }
   }
 
+  // Per-row delete — removes a single delivery from the queue. The row
+  // disappears immediately; the backend skips rows that are mid-send
+  // (status='Sending') and reports them in `skipped`.
+  async function deleteOne(deliveryId, displayName) {
+    if (!deliveryId) return
+    const label = displayName || 'this row'
+    if (!window.confirm(`Remove ${label} from the WhatsApp queue?`)) return
+    setError(null)
+    try {
+      const data = await postJson('/deliveries/delete', { ids: [deliveryId] })
+      const removed = (data.removed || []).length
+      const skipped = (data.skipped || []).length
+      if (removed > 0) showToast(`Removed ${removed} delivery`, 'success')
+      if (skipped > 0) showToast(`${skipped} row is mid-send — try again in a moment`, 'info')
+      await fetchList()
+    } catch (e) {
+      setError(`Delete failed: ${e.message || e}`)
+      showToast(`Delete failed: ${e.message || e}`, 'error')
+    }
+  }
+
+  // Bulk clear — wipes every row from the queue. Confirms first because
+  // it's irreversible.
+  async function clearAll() {
+    if (acting) return
+    if (items.length === 0) {
+      showToast('Queue is already empty', 'info')
+      return
+    }
+    if (!window.confirm(`Remove ALL ${items.length} rows from the WhatsApp queue? This cannot be undone.`)) return
+    setActing(true)
+    setError(null)
+    try {
+      await postJson('/deliveries/clear', { confirm: 'yes' })
+      showToast('Queue cleared', 'success')
+      await fetchList()
+    } catch (e) {
+      setError(`Clear all failed: ${e.message || e}`)
+      showToast(`Clear all failed: ${e.message || e}`, 'error')
+    } finally {
+      setActing(false)
+    }
+  }
+
   async function toggleWorker() {
     if (!worker) return
     setError(null)
@@ -574,6 +618,17 @@ export default function Delivery() {
             >
               ↻ Retry All Failed{failedCount > 0 ? ` (${failedCount})` : ''}
             </button>
+            <button
+              type="button"
+              className="btn btn-ghost gen-banner-btn"
+              onClick={clearAll}
+              disabled={acting || items.length === 0}
+              title={items.length === 0
+                ? 'Queue is already empty'
+                : `Remove all ${items.length} rows from the queue`}
+            >
+              🗑 Clear All{items.length > 0 ? ` (${items.length})` : ''}
+            </button>
           </>
         }
       />
@@ -766,6 +821,15 @@ export default function Delivery() {
                           onClick={() => simulateReply(r.delivery_id)}
                           title="Debug: synthesise an inbound YES reply to advance this row to stage 2"
                         >🧪 Simulate YES Reply</button>
+                      )}
+                      {r.delivery_id && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost dlv-delete-btn"
+                          onClick={() => deleteOne(r.delivery_id, r.recipient_name || r.name)}
+                          title="Remove this delivery from the queue"
+                          aria-label="Delete delivery"
+                        >🗑</button>
                       )}
                     </td>
                   </tr>
