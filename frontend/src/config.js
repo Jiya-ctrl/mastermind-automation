@@ -117,10 +117,16 @@ if (typeof window !== 'undefined' && !window.__mm_fetch_patched) {
     if (!isOurs) return _origFetch(input, init)
 
     const authEndpointBase = AUTH_API_BASE.endsWith('/') ? AUTH_API_BASE.slice(0, -1) : AUTH_API_BASE
+    // Endpoints that legitimately return 401 on bad user input (wrong
+    // password / wrong key) rather than because the session is dead.
+    // Excluding them keeps a single bad attempt from bouncing the
+    // operator to /login — they get a toast and stay on the page.
     const isAuthEndpoint =
       _matchesBase(url, `${authEndpointBase}/auth/login`) ||
       _matchesBase(url, `${authEndpointBase}/auth/verify-recovery`) ||
-      _matchesBase(url, `${authEndpointBase}/auth/reset-password`)
+      _matchesBase(url, `${authEndpointBase}/auth/reset-password`) ||
+      _matchesBase(url, `${authEndpointBase}/auth/verify-current-password`) ||
+      _matchesBase(url, `${authEndpointBase}/auth/change-password`)
 
     const opts = { ...(init || {}) }
     if (!isAuthEndpoint) {
