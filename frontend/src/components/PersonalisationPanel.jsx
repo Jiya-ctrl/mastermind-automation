@@ -351,21 +351,22 @@ export default function PersonalisationPanel() {
       <div className="pstyle-body">
         {activeTab === 'text' && (
           <div className="pstyle-grid">
-            <Row label="Font family" hint="Pick from the list or type a custom font name">
-              <input
-                type="text"
+            <Row label="Font family" hint="Pick any font — 30+ system + web fonts available">
+              <select
                 className="pstyle-input"
-                list="pstyle-font-options"
-                value={cfg.font_family}
-                onChange={(e) => set('font_family', e.target.value)}
-                spellCheck="false"
-                placeholder="Start typing or pick from list…"
-              />
-              <datalist id="pstyle-font-options">
+                value={FONT_OPTIONS.includes(cfg.font_family) ? cfg.font_family : '__custom__'}
+                onChange={(e) => {
+                  if (e.target.value === '__custom__') return
+                  set('font_family', e.target.value)
+                }}
+              >
                 {FONT_OPTIONS.map((f) => (
-                  <option key={f} value={f} />
+                  <option key={f} value={f} style={{ fontFamily: `'${f}', sans-serif` }}>{f}</option>
                 ))}
-              </datalist>
+                {!FONT_OPTIONS.includes(cfg.font_family) && (
+                  <option value="__custom__">{cfg.font_family} (custom)</option>
+                )}
+              </select>
             </Row>
             <Row label="Font size" hint="12–200 px. Type any number or drag the slider.">
               <div className="pstyle-stepper">
