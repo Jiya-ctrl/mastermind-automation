@@ -10,6 +10,20 @@ import {
 
 import { API_BASE, AUTH_API_BASE } from '../config'
 
+// Small inline eye icon used on password fields. `open` = eye open
+// (password currently visible), `open=false` = eye closed (masked).
+function IconEye({ open }) {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+      {open ? (
+        <path d="M12 4.5C7 4.5 2.7 7.6 1 12c1.7 4.4 6 7.5 11 7.5s9.3-3.1 11-7.5C21.3 7.6 17 4.5 12 4.5zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" />
+      ) : (
+        <path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27z" />
+      )}
+    </svg>
+  )
+}
+
 function formatBytes(bytes) {
   if (!bytes || bytes < 1024) return `${bytes || 0} B`
   const units = ['KB', 'MB', 'GB', 'TB']
@@ -59,8 +73,10 @@ export default function Settings() {
   const [currentPassword,  setCurrentPassword]  = useState('')
   const [currentVerified,  setCurrentVerified]  = useState(false)
   const [verifying,        setVerifying]        = useState(false)
+  const [showCurrent,      setShowCurrent]      = useState(false)
   const [newPassword,      setNewPassword]      = useState('')
   const [updating,         setUpdating]         = useState(false)
+  const [showNew,          setShowNew]          = useState(false)
 
   // ---- Storage usage ---------------------------------------------------
   const [stats, setStats] = useState(null)
@@ -193,18 +209,29 @@ export default function Settings() {
             </div>
           </div>
           <div className="settings-input-group">
-            <input
-              type="password"
-              className="settings-input"
-              placeholder="Current password"
-              value={currentPassword}
-              onChange={(e) => {
-                setCurrentPassword(e.target.value)
-                if (currentVerified) setCurrentVerified(false)
-              }}
-              autoComplete="current-password"
-              disabled={currentVerified}
-            />
+            <div className="settings-pwd-wrap">
+              <input
+                type={showCurrent ? 'text' : 'password'}
+                className="settings-input settings-input-pwd"
+                placeholder="Current password"
+                value={currentPassword}
+                onChange={(e) => {
+                  setCurrentPassword(e.target.value)
+                  if (currentVerified) setCurrentVerified(false)
+                }}
+                autoComplete="current-password"
+                disabled={currentVerified}
+              />
+              <button
+                type="button"
+                className="settings-pwd-eye"
+                onClick={() => setShowCurrent((v) => !v)}
+                tabIndex={-1}
+                aria-label={showCurrent ? 'Hide password' : 'Show password'}
+              >
+                <IconEye open={showCurrent} />
+              </button>
+            </div>
             <button
               type="submit"
               className="btn btn-secondary settings-action-btn"
@@ -225,15 +252,27 @@ export default function Settings() {
             </div>
           </div>
           <div className="settings-input-group">
-            <input
-              type="password"
-              className="settings-input"
-              placeholder="New password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              autoComplete="new-password"
-              disabled={!currentVerified}
-            />
+            <div className="settings-pwd-wrap">
+              <input
+                type={showNew ? 'text' : 'password'}
+                className="settings-input settings-input-pwd"
+                placeholder="New password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                autoComplete="new-password"
+                disabled={!currentVerified}
+              />
+              <button
+                type="button"
+                className="settings-pwd-eye"
+                onClick={() => setShowNew((v) => !v)}
+                tabIndex={-1}
+                aria-label={showNew ? 'Hide password' : 'Show password'}
+                disabled={!currentVerified}
+              >
+                <IconEye open={showNew} />
+              </button>
+            </div>
             <button
               type="submit"
               className="btn btn-secondary settings-action-btn"
