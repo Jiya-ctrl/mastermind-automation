@@ -768,6 +768,26 @@ def auth_device_unlock():
     })
 
 
+@app.route("/auth/verify-current-password", methods=["POST"])
+def auth_verify_current_password():
+    """Gate for the Settings → Change password flow. The operator proves
+    they know the current password BEFORE the New-password field unlocks
+    in the UI. Shares the login rate-limit bucket so brute-forcing this
+    endpoint is throttled the same way."""
+    data     = request.get_json(silent=True) or {}
+    user_id  = (data.get("user_id")          or "").strip()
+    current  =  data.get("current_password") or ""
+    log.info("AUTH: /auth/verify-current-password from %s (user_id=%s)", _client_ip(), user_id)
+
+    allowed, retry_min = _check_rate("login", max_per_hour=_RATE_LOGIN_PER_HOUR)
+    if not allowed:
+        return jsonify({"ok": False, "error": "rate_limit", "retry_after_min": retry_min}), 429
+
+    if not _verify_password(user_id, current):
+        return jsonify({"ok": False, "error": "wrong_current"}), 401
+    return jsonify({"ok": True})
+
+
 @app.route("/auth/change-password", methods=["POST"])
 def auth_change_password():
     """Knows-current-password path used by Settings → Change password."""
@@ -782,7 +802,7 @@ def auth_change_password():
     if not _password_meets_rules(new_password):
         return jsonify({"ok": False, "error": "weak"}), 400
     _save_password(new_password)
-    log.info("AUTH: ✅ password changed for %s", user_id)
+    log.info("AUTH: password changed for %s", user_id)
     return jsonify({"ok": True})
 
 

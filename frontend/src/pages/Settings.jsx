@@ -4,6 +4,7 @@ import { useTheme } from '../ThemeContext'
 import {
   getFixedUserId,
   getSessionToken,
+  verifyCurrentPassword,
   changePassword,
 } from '../auth'
 
@@ -47,12 +48,19 @@ export default function Settings() {
   const [toast, setToast] = useState(null)
 
   // ---- Password change (gated by current password) ---------------------
-  // The operator proves identity by typing the current password — the
-  // natural gate for an already-logged-in user. The recovery key is
-  // reserved for the locked-out flow on the Login page.
-  const [currentPassword, setCurrentPassword] = useState('')
-  const [newPassword,     setNewPassword]     = useState('')
-  const [updating,        setUpdating]        = useState(false)
+  // Two-step flow:
+  //   1. Operator types current password + clicks Verify → backend
+  //      confirms it matches. On success `currentVerified` flips true
+  //      and the New-password field unlocks.
+  //   2. Operator types new password + clicks Update → backend rotates
+  //      the stored hash. Form resets.
+  // Editing the current-password field after a verify resets the gate,
+  // so a wrong-then-right re-type still gets re-checked.
+  const [currentPassword,  setCurrentPassword]  = useState('')
+  const [currentVerified,  setCurrentVerified]  = useState(false)
+  const [verifying,        setVerifying]        = useState(false)
+  const [newPassword,      setNewPassword]      = useState('')
+  const [updating,         setUpdating]         = useState(false)
 
   // ---- Storage usage ---------------------------------------------------
   const [stats, setStats] = useState(null)
@@ -92,24 +100,46 @@ export default function Settings() {
     setTimeout(() => setToast(null), 2400)
   }
 
+  async function handleVerifyCurrent(e) {
+    e.preventDefault()
+    if (!currentPassword || verifying || currentVerified) return
+    setVerifying(true)
+    const res = await verifyCurrentPassword(resolvedUserId, currentPassword)
+    setVerifying(false)
+    if (res.ok) {
+      setCurrentVerified(true)
+      showToast('Current password verified', 'success')
+      return
+    }
+    let msg = 'Could not verify current password'
+    if (res.reason === 'wrong-current')        msg = 'Current password is incorrect'
+    else if (res.reason === 'rate_limit')      msg = `Too many attempts — try again in ~${res.retryAfterMin || 5} min`
+    else if (res.reason === 'backend_offline') msg = 'Authentication service offline'
+    else if (res.reason === 'network')         msg = 'Network error'
+    showToast(msg, 'info')
+  }
+
   async function handleChangePassword(e) {
     e.preventDefault()
-    if (updating) return
-    if (!currentPassword || !newPassword) return
+    if (updating || !currentVerified || !newPassword) return
     setUpdating(true)
     const res = await changePassword(resolvedUserId, currentPassword, newPassword)
     setUpdating(false)
     if (res.ok) {
       setCurrentPassword('')
+      setCurrentVerified(false)
       setNewPassword('')
       showToast('Password updated', 'success')
       return
     }
     let msg = 'Could not update password'
-    if (res.reason === 'wrong-current')        msg = 'Current password is incorrect'
-    else if (res.reason === 'weak')            msg = 'Password must be 8+ chars with upper, lower, digit, symbol'
-    else if (res.reason === 'backend_offline') msg = 'Authentication service offline'
-    else if (res.reason === 'network')         msg = 'Network error'
+    if (res.reason === 'wrong-current') {
+      // Current password changed under us (someone else?) — re-gate.
+      setCurrentVerified(false)
+      msg = 'Current password is no longer correct — please re-verify'
+    } else if (res.reason === 'weak')            msg = 'Password must be 8+ chars with upper, lower, digit, symbol'
+    else if (res.reason === 'backend_offline')   msg = 'Authentication service offline'
+    else if (res.reason === 'network')           msg = 'Network error'
     showToast(msg, 'info')
   }
 
@@ -148,28 +178,53 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* 2. Account — current-password-gated change --------------------- */}
+      {/* 2. Account — two-step gate: verify current, then set new ------- */}
       <section className="dash-card settings-card">
         <div className="settings-section-title">Account</div>
 
-        <form className="settings-row settings-row-stack" onSubmit={handleChangePassword}>
+        <form className="settings-row settings-row-stack" onSubmit={handleVerifyCurrent}>
           <div className="settings-row-text">
             <div className="settings-row-label">Change password</div>
             <div className="settings-row-help">
-              Type your current password and the new one (8+ chars, mix
-              of upper, lower, digit, and symbol). Forgot it? Sign out
-              and use “Forgot password?” on the login page.
+              Step 1: confirm your current password. The new-password
+              field unlocks only after the current one is verified.
+              Forgot it? Sign out and use “Forgot password?” on the
+              login page.
             </div>
           </div>
-          <div className="settings-input-grid">
+          <div className="settings-input-group">
             <input
               type="password"
               className="settings-input"
               placeholder="Current password"
               value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
+              onChange={(e) => {
+                setCurrentPassword(e.target.value)
+                if (currentVerified) setCurrentVerified(false)
+              }}
               autoComplete="current-password"
+              disabled={currentVerified}
             />
+            <button
+              type="submit"
+              className="btn btn-secondary settings-action-btn"
+              disabled={verifying || currentVerified || !currentPassword}
+            >
+              {currentVerified ? '✓ Verified' : verifying ? 'Verifying…' : 'Verify'}
+            </button>
+          </div>
+        </form>
+
+        <form className="settings-row settings-row-stack" onSubmit={handleChangePassword}>
+          <div className="settings-row-text">
+            <div className="settings-row-label">New password</div>
+            <div className="settings-row-help">
+              {currentVerified
+                ? 'Step 2: pick a new password (8+ chars with upper, lower, digit, and symbol).'
+                : 'Verify your current password above to unlock this field.'}
+            </div>
+          </div>
+          <div className="settings-input-group">
             <input
               type="password"
               className="settings-input"
@@ -177,11 +232,12 @@ export default function Settings() {
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               autoComplete="new-password"
+              disabled={!currentVerified}
             />
             <button
               type="submit"
               className="btn btn-secondary settings-action-btn"
-              disabled={updating || !currentPassword || !newPassword}
+              disabled={!currentVerified || updating || !newPassword}
             >
               {updating ? 'Updating…' : 'Update password'}
             </button>

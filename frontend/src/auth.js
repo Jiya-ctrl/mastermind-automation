@@ -184,6 +184,34 @@ export async function signIn(userId, password) {
   }
 }
 
+// Two-step gate for Settings → Change password.
+// Step 1: verify the current password (without changing anything). On
+// success the UI unlocks the New-password field.
+//   reason: 'wrong-current' | 'rate_limit' | 'backend_offline' | 'network'
+export async function verifyCurrentPassword(userId, currentPassword) {
+  try {
+    const res = await fetch(`${AUTH_API}/auth/verify-current-password`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        user_id:          (userId || FIXED_USER_ID).trim(),
+        current_password: currentPassword,
+      }),
+    })
+    let data = {}
+    try { data = await res.json() } catch (_) {}
+    if (res.ok && data.ok) return { ok: true }
+    if (data.error === 'rate_limit') {
+      return { ok: false, reason: 'rate_limit', retryAfterMin: data.retry_after_min }
+    }
+    if (data.error === 'wrong_current') return { ok: false, reason: 'wrong-current' }
+    if (res.status === 404)             return { ok: false, reason: 'backend_offline' }
+    return { ok: false, reason: 'wrong-current' }
+  } catch (_) {
+    return { ok: false, reason: 'network' }
+  }
+}
+
 // Knows-current-password change. Used by Settings → Change Password.
 // userId is the canonical user_id (from /auth/me) — callers MUST pass it
 // so the backend's exact-match check against data/auth.json doesn't fail
