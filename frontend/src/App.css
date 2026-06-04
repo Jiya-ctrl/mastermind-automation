@@ -13349,42 +13349,54 @@ html, body { overflow-x: hidden; max-width: 100vw; }
 }
 
 /* Password input + inline eye toggle. The wrapper takes the same
-   flex/grid slot the bare <input> used to. The input pads its right
-   edge so typed chars never slide under the eye button. */
+   flex/grid slot the bare <input> used to. The input reserves right
+   padding so typed chars never slide under the eye button.
+   Strict overrides (!important) because the input-group's own flex
+   rules + the global .settings-input padding were winning otherwise. */
 .settings-pwd-wrap {
-  position: relative;
-  display: flex;
-  flex: 1 1 0;
-  min-width: 0;
+  position: relative !important;
+  display: block !important;
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  width: 100%;
 }
-.settings-input-pwd { padding-right: 42px; }
+.settings-pwd-wrap .settings-input,
+.settings-input-pwd {
+  width: 100% !important;
+  padding-right: 44px !important;
+  box-sizing: border-box !important;
+}
 .settings-pwd-eye {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 32px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  border-radius: 8px;
-  color: var(--text-muted);
-  cursor: pointer;
+  position: absolute !important;
+  right: 6px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  width: 32px !important;
+  height: 32px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  color: #6B7280 !important;
+  cursor: pointer !important;
+  z-index: 3 !important;
+  padding: 0 !important;
   transition: color 140ms ease, background 140ms ease;
 }
 .settings-pwd-eye:hover {
-  color: var(--text);
-  background: rgba(15, 23, 42, 0.06);
+  color: #0B1C30 !important;
+  background: rgba(15, 23, 42, 0.06) !important;
 }
 .settings-pwd-eye:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+  opacity: 0.4 !important;
+  cursor: not-allowed !important;
 }
-[data-theme="dark"] .settings-pwd-eye:hover {
-  background: rgba(255, 255, 255, 0.06);
+[data-theme="dark"] .settings-pwd-eye        { color: #B7ADA3 !important; }
+[data-theme="dark"] .settings-pwd-eye:hover  {
+  color: #F5F1EB !important;
+  background: rgba(255, 255, 255, 0.06) !important;
 }
 
 /* Select ---------------------------------------------------------------- */
