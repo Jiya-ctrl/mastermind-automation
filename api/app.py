@@ -3465,11 +3465,14 @@ def deliveries_clear():
 
 
 @app.route("/deliveries/delete", methods=["POST"])
-def deliveries_delete():
+def deliveries_delete_bulk():
     """Delete specific delivery rows by id. Body: {ids: [<id>, ...]}.
     Used by the Delivery page's per-row trash icon + bulk-select toolbar.
     Rows that are currently Sending are skipped (deleting under the worker
-    is unsafe); the response reports which ids actually got removed."""
+    is unsafe); the response reports which ids actually got removed.
+    Distinct from the existing DELETE /deliveries/<dlv_id> handler — that
+    one takes a single id in the URL path; this one takes a list in the
+    body so the UI can fan out a multi-select clear in one request."""
     payload  = request.get_json(silent=True) or {}
     raw_ids  = payload.get("ids") or []
     if not isinstance(raw_ids, list) or not raw_ids:
