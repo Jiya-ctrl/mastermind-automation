@@ -96,6 +96,12 @@ export default function Delivery() {
   // Status filter — driven by clicking a chip in the status strip below.
   // null = no filter (show all rows); otherwise the exact status string.
   const [statusFilter, setStatusFilter] = useState(null)
+  // Multi-select state — set of delivery_ids the operator has ticked for
+  // bulk action. Stays empty until they tick at least one row.
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
+  // History panel toggle — when true, group the current rows by their
+  // most-recent activity timestamp (Today / Yesterday / Earlier).
+  const [historyMode, setHistoryMode] = useState(false)
 
   // 'acting' disables bulk buttons while a server call is in flight so the
   // user cannot double-click into a duplicate retry / enqueue.
@@ -397,6 +403,60 @@ export default function Delivery() {
     }
   }
 
+  // Bulk delete selected rows — runs the per-row delete endpoint with
+  // the full set of ticked ids in one request.
+  async function deleteSelected() {
+    if (acting || selectedIds.size === 0) return
+    const n = selectedIds.size
+    if (!window.confirm(`Remove ${n} selected ${n === 1 ? 'row' : 'rows'} from the WhatsApp queue?`)) return
+    setActing(true)
+    setError(null)
+    try {
+      const data = await postJson('/deliveries/delete', { ids: [...selectedIds] })
+      const removed = (data.removed || []).length
+      const skipped = (data.skipped || []).length
+      if (removed > 0) showToast(`Removed ${removed} ${removed === 1 ? 'row' : 'rows'}`, 'success')
+      if (skipped > 0) showToast(`${skipped} ${skipped === 1 ? 'row is' : 'rows are'} mid-send — try again`, 'info')
+      setSelectedIds(new Set())
+      await fetchList()
+    } catch (e) {
+      setError(`Bulk delete failed: ${e.message || e}`)
+      showToast(`Bulk delete failed: ${e.message || e}`, 'error')
+    } finally {
+      setActing(false)
+    }
+  }
+
+  // Tick / untick a single row's checkbox.
+  function toggleSelect(deliveryId) {
+    if (!deliveryId) return
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(deliveryId)) next.delete(deliveryId)
+      else next.add(deliveryId)
+      return next
+    })
+  }
+
+  // "Select all on the current view" — tied to the row list the operator
+  // currently sees (so a filter in effect = select within that filter).
+  function selectAllVisible(rowList) {
+    setSelectedIds((prev) => {
+      const visibleIds = rowList.map((r) => r.delivery_id).filter(Boolean)
+      const allTicked  = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id))
+      if (allTicked) {
+        // Untick the visible ones; leave any out-of-view ticks intact.
+        const next = new Set(prev)
+        visibleIds.forEach((id) => next.delete(id))
+        return next
+      }
+      // Tick every visible row.
+      const next = new Set(prev)
+      visibleIds.forEach((id) => next.add(id))
+      return next
+    })
+  }
+
   // Bulk clear — wipes every row from the queue. Confirms first because
   // it's irreversible.
   async function clearAll() {
@@ -620,6 +680,14 @@ export default function Delivery() {
             </button>
             <button
               type="button"
+              className={`btn btn-ghost gen-banner-btn${historyMode ? ' is-active' : ''}`}
+              onClick={() => setHistoryMode((v) => !v)}
+              title="Group rows by Today / Yesterday / Earlier (last 7 days)"
+            >
+              📜 {historyMode ? 'History on' : 'History'}
+            </button>
+            <button
+              type="button"
               className="btn btn-ghost gen-banner-btn"
               onClick={clearAll}
               disabled={acting || items.length === 0}
@@ -714,10 +782,42 @@ export default function Delivery() {
           </div>
         </div>
 
+        {/* Bulk-select toolbar — only appears when ≥1 row is ticked. */}
+        {selectedIds.size > 0 && (
+          <div className="dlv-bulk-toolbar">
+            <span className="dlv-bulk-count">
+              {selectedIds.size} selected
+            </span>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setSelectedIds(new Set())}
+            >Clear selection</button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={deleteSelected}
+              disabled={acting}
+            >🗑 Delete {selectedIds.size} selected</button>
+          </div>
+        )}
+
         <div className="table-wrap">
           <table className="delivery-table">
             <thead>
               <tr>
+                <th style={{ width: 34 }}>
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible rows"
+                    title="Select / deselect all rows in the current view"
+                    checked={
+                      rows.length > 0 &&
+                      rows.every((r) => !r.delivery_id || selectedIds.has(r.delivery_id))
+                    }
+                    onChange={() => selectAllVisible(rows)}
+                  />
+                </th>
                 <th>Recipient</th>
                 <th>Phone</th>
                 <th style={{ width: 130 }}>Media Type</th>
@@ -728,116 +828,142 @@ export default function Delivery() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
-                const displayName  = r.recipient_name || r.name || '—'
-                const displayPhone = r.recipient_phone || '—'
-                const isFailed = r.status === 'Failed'
-                let timeLabel = '—'
-                if (r.deliveredAt)  timeLabel = formatTimestamp(r.deliveredAt)
-                else if (r.sentAt)  timeLabel = formatTimestamp(r.sentAt)
-                else                timeLabel = formatTimestamp(r.createdAt)
-                return (
-                  <tr key={r.row_id || r.id}>
-                    <td>
-                      <div className="cell-name">
-                        <span className="cell-avatar">{initialsOf(displayName)}</span>
-                        <span>{displayName}</span>
-                      </div>
-                    </td>
-                    <td className="cell-file">{displayPhone}</td>
-                    <td>
-                      {(() => {
-                        const k = rowMediaKind(r)
-                        if (!k) {
-                          // No file on disk at all — clearly indicate it.
-                          return <span className="dlv-kind-pill dlv-kind-pill-none">—</span>
-                        }
-                        return (
-                          <span className={`dlv-kind-pill dlv-kind-pill-${k}`}>
-                            <span aria-hidden="true">{k === 'image' ? '🖼' : '🎬'}</span>
-                            {k === 'image' ? 'Image' : 'Video'}
-                          </span>
-                        )
-                      })()}
-                    </td>
-                    <td className="cell-file">
-                      {(() => {
-                        const filename = rowMediaFilename(r)
-                        if (!filename) {
-                          return <span className="cell-faint">No media found</span>
-                        }
-                        return (
-                          <span className="dlv-media-cell" title={filename}>
-                            <span className="dlv-media-cell-name">{filename}</span>
-                          </span>
-                        )
-                      })()}
-                    </td>
-                    <td className="cell-faint" title={r.last_error || ''}>{timeLabel}</td>
-                    <td>
-                      {(() => {
-                        // Status pill — class name uses a dash-safe slug
-                        // so multi-word statuses like "Pending Callback"
-                        // get `status-pending-callback`.
-                        const s    = r.status || 'Queued'
-                        const slug = s.toLowerCase().replace(/\s+/g, '-')
-                        const icon = {
-                          'Delivered':        '✅',
-                          'Read':             '👁',
-                          'Sending':          '⏳',
-                          'Pending Callback': '⏱',
-                          'Queued':           '🕘',
-                          'Failed':           '⚠️',
-                          // Two-step engagement flow.
-                          'Awaiting Reply':   '💬',
-                          'Media Sent':       '📤',
-                          'Replied':          '↩',
-                        }[s] || ''
-                        return (
-                          <span
-                            className={`status-pill status-${slug}`}
-                            title={r.last_error ? `Last error: ${r.last_error}` : ''}
-                          >
-                            {icon && <span aria-hidden="true">{icon} </span>}
-                            {s}
-                            {r.attempts > 1 && s !== 'Delivered' && s !== 'Read' && ` ·${r.attempts}`}
-                          </span>
-                        )
-                      })()}
-                    </td>
-                    <td>
-                      {isFailed && r.delivery_id && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={() => retryOne(r.delivery_id)}
-                          title={r.last_error || 'Retry this delivery'}
-                        >↻ Retry</button>
-                      )}
-                      {r.status === 'Awaiting Reply' && r.delivery_id && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost dlv-simulate-btn"
-                          onClick={() => simulateReply(r.delivery_id)}
-                          title="Debug: synthesise an inbound YES reply to advance this row to stage 2"
-                        >🧪 Simulate YES Reply</button>
-                      )}
-                      {r.delivery_id && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost dlv-delete-btn"
-                          onClick={() => deleteOne(r.delivery_id, r.recipient_name || r.name)}
-                          title="Remove this delivery from the queue"
-                          aria-label="Delete delivery"
-                        >🗑</button>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
+              {(() => {
+                // History mode groups rows by activity day so the
+                // operator can scan "who got media today / yesterday /
+                // earlier this week" at a glance. Otherwise we just
+                // render the flat row list as before.
+                const renderRow = (r) => {
+                  const displayName  = r.recipient_name || r.name || '—'
+                  const displayPhone = r.recipient_phone || '—'
+                  const isFailed = r.status === 'Failed'
+                  let timeLabel = '—'
+                  if (r.deliveredAt)      timeLabel = formatTimestamp(r.deliveredAt)
+                  else if (r.sentAt)      timeLabel = formatTimestamp(r.sentAt)
+                  else                    timeLabel = formatTimestamp(r.createdAt)
+                  const ticked = Boolean(r.delivery_id && selectedIds.has(r.delivery_id))
+                  return (
+                    <tr key={r.row_id || r.id} className={ticked ? 'is-selected' : undefined}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${displayName}`}
+                          disabled={!r.delivery_id}
+                          checked={ticked}
+                          onChange={() => toggleSelect(r.delivery_id)}
+                        />
+                      </td>
+                      <td>
+                        <div className="cell-name">
+                          <span className="cell-avatar">{initialsOf(displayName)}</span>
+                          <span>{displayName}</span>
+                        </div>
+                      </td>
+                      <td className="cell-file">{displayPhone}</td>
+                      <td>
+                        {(() => {
+                          const k = rowMediaKind(r)
+                          if (!k) {
+                            return <span className="dlv-kind-pill dlv-kind-pill-none">—</span>
+                          }
+                          return (
+                            <span className={`dlv-kind-pill dlv-kind-pill-${k}`}>
+                              <span aria-hidden="true">{k === 'image' ? '🖼' : '🎬'}</span>
+                              {k === 'image' ? 'Image' : 'Video'}
+                            </span>
+                          )
+                        })()}
+                      </td>
+                      <td className="cell-file">
+                        {(() => {
+                          const filename = rowMediaFilename(r)
+                          if (!filename) {
+                            return <span className="cell-faint">No media found</span>
+                          }
+                          return (
+                            <span className="dlv-media-cell" title={filename}>
+                              <span className="dlv-media-cell-name">{filename}</span>
+                            </span>
+                          )
+                        })()}
+                      </td>
+                      <td className="cell-faint" title={r.last_error || ''}>{timeLabel}</td>
+                      <td>
+                        {(() => {
+                          const s    = r.status || 'Queued'
+                          const slug = s.toLowerCase().replace(/\s+/g, '-')
+                          const icon = {
+                            'Delivered':        '✅',
+                            'Read':             '👁',
+                            'Sending':          '⏳',
+                            'Pending Callback': '⏱',
+                            'Queued':           '🕘',
+                            'Failed':           '⚠️',
+                            'Awaiting Reply':   '💬',
+                            'Media Sent':       '📤',
+                            'Replied':          '↩',
+                          }[s] || ''
+                          return (
+                            <span
+                              className={`status-pill status-${slug}`}
+                              title={r.last_error ? `Last error: ${r.last_error}` : ''}
+                            >
+                              {icon && <span aria-hidden="true">{icon} </span>}
+                              {s}
+                              {r.attempts > 1 && s !== 'Delivered' && s !== 'Read' && ` ·${r.attempts}`}
+                            </span>
+                          )
+                        })()}
+                      </td>
+                      <td>
+                        {isFailed && r.delivery_id && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => retryOne(r.delivery_id)}
+                            title={r.last_error || 'Retry this delivery'}
+                          >↻ Retry</button>
+                        )}
+                        {r.status === 'Awaiting Reply' && r.delivery_id && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost dlv-simulate-btn"
+                            onClick={() => simulateReply(r.delivery_id)}
+                            title="Debug: synthesise an inbound YES reply to advance this row to stage 2"
+                          >🧪 Simulate YES Reply</button>
+                        )}
+                        {r.delivery_id && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost dlv-delete-btn"
+                            onClick={() => deleteOne(r.delivery_id, r.recipient_name || r.name)}
+                            title="Remove this delivery from the queue"
+                            aria-label="Delete delivery"
+                          >🗑</button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                }
+                if (!historyMode) return rows.map(renderRow)
+                const groups = groupRowsByDay(rows)
+                const out = []
+                for (const g of groups) {
+                  out.push(
+                    <tr key={`hdr-${g.key}`} className="dlv-history-header">
+                      <td colSpan={8}>
+                        <strong>{g.label}</strong>
+                        <span className="dlv-history-count">{g.rows.length}</span>
+                      </td>
+                    </tr>
+                  )
+                  for (const r of g.rows) out.push(renderRow(r))
+                }
+                return out
+              })()}
               {loaded && rows.length === 0 && !error && (
                 <tr>
-                  <td colSpan={7} className="cell-empty">
+                  <td colSpan={8} className="cell-empty">
                     {items.length === 0
                       ? 'No deliveries yet. Generate personalised media from the Sheets page first, then click Send Media here.'
                       : 'No rows match the current filter.'}
@@ -846,7 +972,7 @@ export default function Delivery() {
               )}
               {!loaded && !error && (
                 <tr>
-                  <td colSpan={7} className="cell-empty">Loading delivery state…</td>
+                  <td colSpan={8} className="cell-empty">Loading delivery state…</td>
                 </tr>
               )}
             </tbody>
@@ -864,4 +990,38 @@ export default function Delivery() {
       )}
     </>
   )
+}
+
+// History grouping — splits the row list into Today / Yesterday /
+// Earlier this week / Older buckets, ordered most-recent first within
+// each bucket. Empty groups are dropped so the operator only sees the
+// buckets that actually have rows. Anchor timestamp prefers
+// deliveredAt → sentAt → updatedAt → createdAt so even rows that never
+// completed still land in a sensible bucket.
+function groupRowsByDay(rows) {
+  const now = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const yesterdayStart = todayStart - 24 * 60 * 60 * 1000
+  const weekStart = todayStart - 6 * 24 * 60 * 60 * 1000  // 7-day window incl. today
+
+  const buckets = {
+    today:     { key: 'today',     label: 'Today',                rows: [] },
+    yesterday: { key: 'yesterday', label: 'Yesterday',            rows: [] },
+    week:      { key: 'week',      label: 'Earlier this week',    rows: [] },
+    older:     { key: 'older',     label: 'Older than a week',    rows: [] },
+  }
+  for (const r of rows) {
+    const ts = r.deliveredAt || r.sentAt || r.updatedAt || r.createdAt || 0
+    if (ts >= todayStart)         buckets.today.rows.push(r)
+    else if (ts >= yesterdayStart) buckets.yesterday.rows.push(r)
+    else if (ts >= weekStart)     buckets.week.rows.push(r)
+    else                          buckets.older.rows.push(r)
+  }
+  // Within each bucket: most recent first.
+  const ts = (r) => r.deliveredAt || r.sentAt || r.updatedAt || r.createdAt || 0
+  for (const k of Object.keys(buckets)) {
+    buckets[k].rows.sort((a, b) => ts(b) - ts(a))
+  }
+  return [buckets.today, buckets.yesterday, buckets.week, buckets.older]
+    .filter((g) => g.rows.length > 0)
 }

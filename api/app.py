@@ -1815,41 +1815,19 @@ def list_generated_delete():
                 "error": f"no {kind} file found",
             })
 
-    # Delivery records key off the stem (recipient), not the asset kind.
-    # Only drop a delivery row when BOTH halves are gone — otherwise the
-    # recipient still has media on disk and the row stays meaningful.
+    # Delivery records used to get cascade-deleted here when no media
+    # remained for a stem. Operator feedback: that cross-page side effect
+    # was surprising — Generated Media should manage the source files,
+    # WhatsApp Send should manage its own queue. Each page now owns its
+    # delete button independently. The Delivery page's per-row 🗑 + the
+    # bulk-select toolbar are the only ways a delivery row gets removed.
     removed_dlv = 0
-    if touched_stems:
-        with _DELIVERIES_LOCK:
-            doc = _load_deliveries()
-            kept = []
-            for d in doc["items"]:
-                s = d.get("stem")
-                if s in touched_stems:
-                    # Check filesystem — drop only if nothing left.
-                    img_left = any(
-                        os.path.isfile(os.path.join(OUTPUT_IMAGES, s + e))
-                        for e in _IMAGE_OUT_EXTS
-                    )
-                    vid_left = any(
-                        os.path.isfile(os.path.join(OUTPUT_VIDEOS, s + e))
-                        for e in _VIDEO_OUT_EXTS
-                    )
-                    if img_left or vid_left:
-                        kept.append(d)
-                    else:
-                        removed_dlv += 1
-                else:
-                    kept.append(d)
-            if removed_dlv:
-                doc["items"] = kept
-                _save_deliveries(doc)
 
     print(
         f"[/list-generated/delete] removed {len(deleted)} asset(s) "
         f"({sum(1 for d in deleted if d['kind'] == 'image')} image, "
         f"{sum(1 for d in deleted if d['kind'] == 'video')} video), "
-        f"{len(failed)} failed, dropped {removed_dlv} delivery row(s)",
+        f"{len(failed)} failed (delivery rows untouched)",
         flush=True,
     )
 
@@ -1907,34 +1885,15 @@ def list_generated_wipe():
             except OSError as e:
                 failed.append({"filename": fn, "kind": kind, "error": str(e)})
 
-    # Clean dangling delivery records — any stem with no remaining media.
-    removed_dlv = 0
-    with _DELIVERIES_LOCK:
-        doc = _load_deliveries()
-        kept = []
-        for d in doc["items"]:
-            s = d.get("stem")
-            img_left = any(
-                os.path.isfile(os.path.join(OUTPUT_IMAGES, s + e))
-                for e in _IMAGE_OUT_EXTS
-            )
-            vid_left = any(
-                os.path.isfile(os.path.join(OUTPUT_VIDEOS, s + e))
-                for e in _VIDEO_OUT_EXTS
-            )
-            if img_left or vid_left:
-                kept.append(d)
-            else:
-                removed_dlv += 1
-        if removed_dlv:
-            doc["items"] = kept
-            _save_deliveries(doc)
+    # Used to cascade-delete dangling delivery rows here; removed for the
+    # same reason as /list-generated/delete (operator wants Generated
+    # Media and WhatsApp Send to act independently).
 
     print(
         f"[/list-generated/wipe] kinds={kinds} removed {len(deleted)} file(s) "
         f"({sum(1 for d in deleted if d['kind'] == 'image')} image, "
         f"{sum(1 for d in deleted if d['kind'] == 'video')} video), "
-        f"dropped {removed_dlv} delivery row(s), failed={len(failed)}",
+        f"failed={len(failed)} (delivery rows untouched)",
         flush=True,
     )
 
@@ -1943,7 +1902,7 @@ def list_generated_wipe():
         "deleted":    deleted,
         "failed":     failed,
         "count":      len(deleted),
-        "deliveries": removed_dlv,
+        "deliveries": 0,
     })
 
 
