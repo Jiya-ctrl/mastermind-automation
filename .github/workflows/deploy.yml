@@ -58,7 +58,7 @@ jobs:
             git log -1 --oneline
             echo
             echo "==> Step 2/4: Rebuilding Docker images (using layer cache)"
-            docker compose --env-file .env.production up -d --build
+            docker compose --env-file .env.production up -d --build --remove-orphans
             echo
             echo "==> Step 3/4: Pruning unused images"
             docker image prune -f
@@ -92,7 +92,7 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             git log -1 --oneline
-            docker compose --env-file .env.production up -d --build
+            docker compose --env-file .env.production up -d --build --remove-orphans
             docker image prune -f
             docker compose ps
             echo "==> Deploy complete (attempt 2)."
@@ -119,7 +119,7 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             git log -1 --oneline
-            docker compose --env-file .env.production up -d --build
+            docker compose --env-file .env.production up -d --build --remove-orphans
             docker image prune -f
             docker compose ps
             echo "==> Deploy complete (attempt 3)."
