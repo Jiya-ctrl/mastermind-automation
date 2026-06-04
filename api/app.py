@@ -3173,12 +3173,31 @@ def _advance_to_media_stage(phone_digits, inbound_wamid):
     and transition it to stage='media', status='Queued' so the worker
     ships the personalised media. Returns the number of rows advanced.
 
-    Match is by `recipient_phone` normalised to digits-only. This is
-    the same normalisation the provider applies before POST to Meta,
-    so the round-trip is symmetric.
+    Match is digits-only, suffix-tolerant: Meta sends the full
+    international number (e.g. 919503802301) but rows often store just
+    the local 10 digits (9503802301). A strict equality check missed
+    every reply for users whose row was saved without the country code.
+    We now compare the last 10 digits — that's the operator-meaningful
+    mobile number, and any country code prefix on either side gets
+    ignored.
     """
     def _digits(s):
         return "".join(ch for ch in (s or "") if ch.isdigit())
+
+    def _phone_match(row_digits, inbound_digits):
+        if not row_digits or not inbound_digits:
+            return False
+        if row_digits == inbound_digits:
+            return True
+        # Suffix match on the last 10 digits handles the country-code
+        # mismatch (row=9503802301, inbound=919503802301 → both end in
+        # 9503802301). Fallback to last 9 / last 8 catches edge cases
+        # where the row had a leading digit dropped.
+        for n in (10, 9, 8):
+            if len(row_digits) >= n and len(inbound_digits) >= n:
+                if row_digits[-n:] == inbound_digits[-n:]:
+                    return True
+        return False
 
     if not phone_digits:
         return 0
@@ -3190,7 +3209,7 @@ def _advance_to_media_stage(phone_digits, inbound_wamid):
                 continue
             if d.get("flow") != "two-step":
                 continue
-            if _digits(d.get("recipient_phone")) != phone_digits:
+            if not _phone_match(_digits(d.get("recipient_phone")), phone_digits):
                 continue
             # Transition: Awaiting Reply → Replied → Queued (stage=media).
             # We log the Replied state but immediately bump to Queued so

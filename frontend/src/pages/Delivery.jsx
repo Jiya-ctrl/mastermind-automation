@@ -433,7 +433,10 @@ export default function Delivery() {
 
   const rows = useMemo(() => items.filter((r) => {
     if (mediaKind !== 'all' && rowMediaKind(r) !== mediaKind) return false
-    if (statusFilter && r.status !== statusFilter) return false
+    // statusFilter is now a Set of allowed raw statuses (one chip can
+    // match multiple states, e.g. "Delivered" chip = Delivered + Media Sent).
+    if (statusFilter instanceof Set && !statusFilter.has(r.status)) return false
+    if (typeof statusFilter === 'string' && r.status !== statusFilter) return false
     if (!query) return true
     const q = query.toLowerCase()
     const haystack = [
@@ -582,42 +585,52 @@ export default function Delivery() {
         </div>
       )}
 
-      {/* Compact one-line status strip — replaces the 6-card KPI grid
-          AND the old chip-row filter. Each chip is now a TOGGLE: click
-          one to filter the table to that status, click again (or the
-          "All" chip) to clear. Colour tones still distinguish Failed /
-          Delivered etc. at a glance. */}
+      {/* Compact one-line status strip — 4 chips only (operator request:
+          "keep only required buttons 3 to 4"). Transient states (Sending /
+          Queued / Media Sent) are absorbed into the macro buckets so the
+          operator sees one number per meaningful outcome: All / In progress
+          / Awaiting Reply / Done / Failed. Each chip toggles a table filter
+          and matches on the underlying raw statuses. */}
       <div className="status-strip">
-        <button
-          type="button"
-          className={`status-strip-chip status-strip-chip-all${statusFilter === null ? ' status-strip-chip-active' : ''}`}
-          onClick={() => setStatusFilter(null)}
-        >
-          <span className="status-strip-label">All</span>
-          <span className="status-strip-value">{items.length}</span>
-        </button>
-        {[
-          { label: 'Delivered',      value: counts.Delivered,               tone: 'success' },
-          { label: 'Media Sent',     value: counts['Media Sent']     || 0,  tone: 'success' },
-          { label: 'Awaiting Reply', value: counts['Awaiting Reply'] || 0,  tone: 'warning' },
-          { label: 'Sending',        value: counts.Sending,                 tone: 'warning' },
-          { label: 'Queued',         value: counts.Queued,                  tone: 'muted'   },
-          { label: 'Failed',         value: counts.Failed,                  tone: 'danger'  },
-        ].map((s) => {
-          const active = statusFilter === s.label
-          return (
-            <button
-              key={s.label}
-              type="button"
-              className={`status-strip-chip status-strip-chip-${s.tone}${active ? ' status-strip-chip-active' : ''}`}
-              onClick={() => setStatusFilter(active ? null : s.label)}
-              title={active ? `Showing ${s.label} only — click again to clear` : `Filter to ${s.label}`}
-            >
-              <span className="status-strip-label">{s.label}</span>
-              <span className="status-strip-value">{s.value}</span>
-            </button>
-          )
-        })}
+        {(() => {
+          // (label, tone, value, matchSet)
+          // matchSet is the set of raw row statuses this chip filters to.
+          // null matchSet = "All" — clear filter.
+          const inProgress    = counts.Queued + counts.Sending
+          const doneCount     = counts.Delivered + (counts['Media Sent'] || 0)
+          const chips = [
+            { key: 'all',      label: 'All',            value: items.length,                tone: 'all',     match: null },
+            { key: 'done',     label: 'Delivered',      value: doneCount,                   tone: 'success', match: new Set(['Delivered', 'Media Sent']) },
+            { key: 'await',    label: 'Awaiting Reply', value: counts['Awaiting Reply'] || 0, tone: 'warning', match: new Set(['Awaiting Reply']) },
+            { key: 'failed',   label: 'Failed',         value: counts.Failed,               tone: 'danger',  match: new Set(['Failed']) },
+          ]
+          // Only show the "In progress" chip when there's actually something
+          // in flight — otherwise it's noise.
+          if (inProgress > 0) {
+            chips.splice(1, 0, {
+              key: 'progress', label: 'In progress', value: inProgress,
+              tone: 'muted',  match: new Set(['Queued', 'Sending']),
+            })
+          }
+          return chips.map((c) => {
+            const active = (c.match === null && statusFilter === null)
+                        || (c.match instanceof Set && statusFilter instanceof Set
+                            && [...c.match].every((s) => statusFilter.has(s))
+                            && c.match.size === statusFilter.size)
+            return (
+              <button
+                key={c.key}
+                type="button"
+                className={`status-strip-chip status-strip-chip-${c.tone}${active ? ' status-strip-chip-active' : ''}`}
+                onClick={() => setStatusFilter(active ? null : c.match)}
+                title={active ? `Showing ${c.label} only — click to clear` : `Filter to ${c.label}`}
+              >
+                <span className="status-strip-label">{c.label}</span>
+                <span className="status-strip-value">{c.value}</span>
+              </button>
+            )
+          })
+        })()}
       </div>
 
       <section className="card">
