@@ -37,9 +37,10 @@ const FALLBACK_PREVIEW = {
 
 // Curated font cascade — system-safe defaults so renders never fall
 // back to a missing font. Operator picks from this list; the API
-// validator accepts any string up to 64 chars, so power users can
-// extend in future without backend changes.
+// validator accepts any string up to 64 chars, so the input also
+// supports custom typing.
 const FONT_OPTIONS = [
+  // Sans-serif (UI / modern)
   'DejaVu Sans',
   'Inter',
   'Plus Jakarta Sans',
@@ -48,19 +49,56 @@ const FONT_OPTIONS = [
   'Roboto',
   'Poppins',
   'Lato',
+  'Montserrat',
+  'Nunito',
+  'Source Sans Pro',
+  'Raleway',
+  'Work Sans',
+  'Arial',
+  'Helvetica',
+  'Verdana',
+  'Tahoma',
+  'Trebuchet MS',
+  'Calibri',
+  'Segoe UI',
+  // Serif (formal / editorial)
+  'Times New Roman',
+  'Georgia',
+  'Merriweather',
+  'Playfair Display',
+  'Lora',
+  'Cambria',
+  'Garamond',
+  'Book Antiqua',
+  // Display / decorative
+  'Bebas Neue',
+  'Oswald',
+  'Anton',
+  // Monospace
+  'Courier New',
+  'Consolas',
+  'Source Code Pro',
 ]
 
+// Background mode — "orange_strip" and "white_strip" removed from the
+// UI per operator request: they're just colour presets of custom_strip
+// (#F97316 / #FFFFFF) so keeping all three was redundant. Backend
+// still accepts them for any pre-existing persisted config.
 const BG_MODES = [
-  { key: 'on_template',  label: 'On template',       hint: 'Print directly on the template’s own area (recommended for templates with a designed footer)' },
-  { key: 'orange_strip', label: 'Orange strip',      hint: 'Paint a full-width orange band across the bottom before printing text' },
-  { key: 'white_strip',  label: 'White strip',       hint: 'Paint a full-width white band — best with dark text' },
-  { key: 'custom_strip', label: 'Custom strip',      hint: 'Pick your own strip colour' },
+  { key: 'on_template',  label: 'On template',  hint: 'Print directly on the template’s own area (recommended for templates with a designed footer)' },
+  { key: 'custom_strip', label: 'Coloured strip', hint: 'Paint a full-width strip in any colour you pick — replaces the old Orange/White presets' },
 ]
 
 const POSITION_OPTIONS = [
   { key: 'bottom', label: 'Bottom' },
   { key: 'center', label: 'Center' },
   { key: 'top',    label: 'Top' },
+]
+
+const ALIGN_OPTIONS = [
+  { key: 'left',   label: 'Left'   },
+  { key: 'center', label: 'Center' },
+  { key: 'right',  label: 'Right'  },
 ]
 
 export default function PersonalisationPanel() {
@@ -313,28 +351,30 @@ export default function PersonalisationPanel() {
       <div className="pstyle-body">
         {activeTab === 'text' && (
           <div className="pstyle-grid">
-            <Row label="Font family" hint="Used for all personalisation text">
-              <select
+            <Row label="Font family" hint="Pick from the list or type a custom font name">
+              <input
+                type="text"
                 className="pstyle-input"
+                list="pstyle-font-options"
                 value={cfg.font_family}
                 onChange={(e) => set('font_family', e.target.value)}
-              >
+                spellCheck="false"
+                placeholder="Start typing or pick from list…"
+              />
+              <datalist id="pstyle-font-options">
                 {FONT_OPTIONS.map((f) => (
-                  <option key={f} value={f}>{f}</option>
+                  <option key={f} value={f} />
                 ))}
-                {!FONT_OPTIONS.includes(cfg.font_family) && (
-                  <option value={cfg.font_family}>{cfg.font_family} (custom)</option>
-                )}
-              </select>
+              </datalist>
             </Row>
-            <Row label="Font size" hint="12–200 px. Auto-fits down if a line overflows.">
+            <Row label="Font size" hint="12–200 px. Type any number or drag the slider.">
               <div className="pstyle-stepper">
-                <input
-                  type="number"
-                  min="12" max="200"
-                  className="pstyle-input pstyle-input-num"
+                <FreeNumberInput
+                  min={12} max={200} step={1}
                   value={cfg.font_size}
-                  onChange={(e) => set('font_size', clampInt(e.target.value, 12, 200, defaults.font_size))}
+                  fallback={defaults.font_size}
+                  onCommit={(n) => set('font_size', n)}
+                  className="pstyle-input pstyle-input-num"
                 />
                 <input
                   type="range"
@@ -345,35 +385,29 @@ export default function PersonalisationPanel() {
                 />
               </div>
             </Row>
-            <Row label="Text color" hint="Used for address, contact label, phone (the name line follows the bold toggle below)">
+            <Row label="Text color" hint="Used for all personalisation text (address, contact, phone, name)">
               <ColorField
                 value={cfg.font_color}
                 onChange={(v) => set('font_color', v)}
                 presets={COLOUR_PRESETS}
               />
             </Row>
-            <Row label="Bold the name line" hint="Highlights the recipient's name relative to the rest of the block">
+            <Row label="Bold everything" hint="Renders the entire personalisation block in bold weight">
               <Toggle
                 value={cfg.bold_name}
                 onChange={(v) => set('bold_name', v)}
               />
             </Row>
-            <Row label="Shadow opacity" hint="0 = no shadow · 1 = strongest. Helps legibility on busy backgrounds.">
-              <div className="pstyle-stepper">
-                <input
-                  type="number"
-                  min="0" max="1" step="0.05"
-                  className="pstyle-input pstyle-input-num"
-                  value={cfg.shadow_opacity}
-                  onChange={(e) => set('shadow_opacity', clampFloat(e.target.value, 0, 1, defaults.shadow_opacity))}
-                />
-                <input
-                  type="range"
-                  min="0" max="1" step="0.05"
-                  value={cfg.shadow_opacity}
-                  onChange={(e) => set('shadow_opacity', parseFloat(e.target.value))}
-                  className="pstyle-slider"
-                />
+            <Row label="Text alignment" hint="How lines align within the strip / overlay area">
+              <div className="pstyle-segment">
+                {ALIGN_OPTIONS.map((a) => (
+                  <button
+                    key={a.key}
+                    type="button"
+                    className={`pstyle-segment-btn${(cfg.text_align || 'left') === a.key ? ' pstyle-segment-btn-active' : ''}`}
+                    onClick={() => set('text_align', a.key)}
+                  >{a.label}</button>
+                ))}
               </div>
             </Row>
           </div>
@@ -413,14 +447,14 @@ export default function PersonalisationPanel() {
               </Row>
             )}
             {cfg.background_mode !== 'on_template' && (
-              <Row label="Strip height" hint="As fraction of frame height (0.05–0.50). Affects strip modes only.">
+              <Row label="Strip height" hint="How tall the strip is (5%–50% of the frame). Type any value or drag.">
                 <div className="pstyle-stepper">
-                  <input
-                    type="number"
-                    min="0.05" max="0.5" step="0.01"
-                    className="pstyle-input pstyle-input-num"
+                  <FreeNumberInput
+                    min={0.05} max={0.5} step={0.01} decimals={2}
                     value={cfg.strip_height_pct}
-                    onChange={(e) => set('strip_height_pct', clampFloat(e.target.value, 0.05, 0.5, defaults.strip_height_pct))}
+                    fallback={defaults.strip_height_pct}
+                    onCommit={(n) => set('strip_height_pct', n)}
+                    className="pstyle-input pstyle-input-num"
                   />
                   <input
                     type="range"
@@ -450,14 +484,14 @@ export default function PersonalisationPanel() {
                 ))}
               </div>
             </Row>
-            <Row label="Margin from edge" hint="As fraction of frame height (0.0–0.30). Pushes text away from the chosen edge.">
+            <Row label="Margin from edge" hint="Distance from the edge (0%–30% of frame height). Type any value or drag.">
               <div className="pstyle-stepper">
-                <input
-                  type="number"
-                  min="0" max="0.3" step="0.01"
-                  className="pstyle-input pstyle-input-num"
+                <FreeNumberInput
+                  min={0} max={0.3} step={0.01} decimals={2}
                   value={cfg.margin_pct}
-                  onChange={(e) => set('margin_pct', clampFloat(e.target.value, 0, 0.3, defaults.margin_pct))}
+                  fallback={defaults.margin_pct}
+                  onCommit={(n) => set('margin_pct', n)}
+                  className="pstyle-input pstyle-input-num"
                 />
                 <input
                   type="range"
@@ -469,11 +503,6 @@ export default function PersonalisationPanel() {
                 <span className="pstyle-meta">{Math.round(cfg.margin_pct * 100)}% of frame height</span>
               </div>
             </Row>
-            <div className="pstyle-info">
-              Note: position changes apply to the LIBASS overlay (video).
-              Image renderer uses its own strip layout for now — full
-              parity is coming in the next iteration.
-            </div>
           </div>
         )}
       </div>
@@ -523,24 +552,27 @@ function PreviewCard({ kind, cfg, mediaUrl, data, errorMsg }) {
 
   // Strip background colour — derived from background_mode + strip_color.
   // 'on_template' renders without a coloured strip so the text floats on
-  // the actual template media, matching production behaviour.
+  // the actual template media, matching production behaviour. Legacy
+  // orange_strip / white_strip values are kept readable for any saved
+  // configs that still hold them.
   const stripBg =
     cfg.background_mode === 'orange_strip' ? '#F97316' :
     cfg.background_mode === 'white_strip'  ? '#FFFFFF' :
     cfg.background_mode === 'custom_strip' ? cfg.strip_color :
     'transparent'
 
-  // Preview font size is scaled — preview cards are ~200px wide so we
-  // shrink the actual font_size aggressively but stay legible. A
-  // linear scale (46→3px) would be unreadable, so we use a perceptual
-  // size that still reacts to operator changes.
-  const previewFontPx = Math.max(7, Math.min(12, Math.round(cfg.font_size * 0.18)))
+  // Scale the operator's font_size down for the miniature preview.
+  const previewFontPx = Math.max(7, Math.min(14, Math.round(cfg.font_size * 0.18)))
 
-  // Strip auto-sizes to its content in preview so the text never gets
-  // clipped — the real renderer applies strip_height_pct on the actual
-  // frame, but in this miniature preview we just let it grow as tall as
-  // the lines need.
-  const stripStyle = { padding: '10px 14px' }
+  // Strip-height: preview the operator's strip_height_pct directly so
+  // dragging the slider produces a visible effect. The strip occupies a
+  // share of the frame height equal to strip_height_pct.
+  const hasStrip = cfg.background_mode !== 'on_template'
+  const stripHeightCss = hasStrip
+    ? `${Math.round((cfg.strip_height_pct || 0.24) * 100)}%`
+    : 'auto'
+  const textAlign = cfg.text_align || 'left'
+  const fontWeight = cfg.bold_name ? 700 : 400
 
   // Vertical alignment within the card — drives flexbox justify-content
   // on the wrapper so the overlay sits where the operator chose.
@@ -548,6 +580,10 @@ function PreviewCard({ kind, cfg, mediaUrl, data, errorMsg }) {
     cfg.position === 'top'    ? 'flex-start' :
     cfg.position === 'center' ? 'center'     :
                                 'flex-end'
+
+  // Margin from edge — wrap padding reflects the operator's margin_pct
+  // so dragging the slider visibly shifts the strip in/out from the edge.
+  const wrapPadding = `${Math.round((cfg.margin_pct || 0) * 100)}% 0`
 
   return (
     <div className="pstyle-preview-card">
@@ -568,30 +604,31 @@ function PreviewCard({ kind, cfg, mediaUrl, data, errorMsg }) {
           )}
         <div
           className="pstyle-preview-overlay-wrap"
-          style={{ justifyContent: justify }}
+          style={{ justifyContent: justify, padding: wrapPadding }}
         >
           <div
             className="pstyle-preview-overlay"
             style={{
-              ...stripStyle,
+              padding:     '8px 12px',
+              height:      stripHeightCss,
+              minHeight:   hasStrip ? stripHeightCss : 'auto',
+              boxSizing:   'border-box',
+              display:     'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
               background:  stripBg,
               color:       cfg.font_color,
               fontFamily:  `'${cfg.font_family}', system-ui, sans-serif`,
               fontSize:    previewFontPx,
-              textShadow:  cfg.shadow_opacity > 0
-                ? `0 1px 2px rgba(0,0,0,${cfg.shadow_opacity})`
-                : 'none',
+              fontWeight,
+              textAlign,
             }}
           >
             <div className="pstyle-preview-line">
               Address: {preview.address}
             </div>
             <div className="pstyle-preview-line">
-              Contact:{' '}
-              <span style={{ fontWeight: cfg.bold_name ? 700 : 400 }}>
-                {preview.name}
-              </span>{' '}
-              {preview.phone}
+              Contact: {preview.name} {preview.phone}
             </div>
           </div>
         </div>
@@ -669,6 +706,51 @@ function ColorField({ value, onChange, presets }) {
 
 
 // ---------- helpers ---------------------------------------------------------
+
+// Number input that lets the operator type freely — partial values
+// like "5" or "0." don't snap to the min until they blur or hit Enter.
+// Solves the "I can't type a value, it keeps jumping" complaint without
+// removing the clamp guarantee (committed value is always in range).
+function FreeNumberInput({ value, min, max, step, decimals, fallback, onCommit, className }) {
+  const [draft, setDraft] = useState(String(value))
+
+  useEffect(() => {
+    // Sync external changes (slider drag, save reload) into the draft —
+    // but only if the operator isn't actively editing a different value.
+    const parsedDraft = parseFloat(draft)
+    if (!Number.isFinite(parsedDraft) || parsedDraft !== Number(value)) {
+      setDraft(String(value))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value])
+
+  function commit() {
+    let n = parseFloat(draft)
+    if (!Number.isFinite(n)) n = fallback
+    if (n < min) n = min
+    if (n > max) n = max
+    if (typeof decimals === 'number') n = Math.round(n * 10 ** decimals) / 10 ** decimals
+    setDraft(String(n))
+    if (n !== Number(value)) onCommit(n)
+  }
+
+  return (
+    <input
+      type="number"
+      inputMode="decimal"
+      className={className}
+      min={min}
+      max={max}
+      step={step}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit() }
+      }}
+    />
+  )
+}
 
 function clampInt(raw, lo, hi, fallback) {
   const n = parseInt(raw, 10)

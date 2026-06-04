@@ -10799,13 +10799,13 @@ html, body { overflow-x: hidden; max-width: 100vw; }
   color: rgba(255, 255, 255, 0.60);
 }
 
-/* Post-save toast — slides up from the bottom, auto-dismisses after 2.4s.
-   Replaces the persistent green "Saved 12:51:11 PM" badge so the page
-   reads clean once the upload completes. */
+/* Post-save toast — slides DOWN from the top now (was at bottom: 32px,
+   which was overlapping the floating Setup Assistant CTA and the page's
+   back button on shorter viewports). Auto-dismisses after 2.4s. */
 .tmpl-toast {
   position: fixed;
   left: 50%;
-  bottom: 32px;
+  top: 92px;
   transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
@@ -10836,7 +10836,7 @@ html, body { overflow-x: hidden; max-width: 100vw; }
   font-weight: 800;
 }
 @keyframes tmplToastIn {
-  from { opacity: 0; transform: translate(-50%, 12px); }
+  from { opacity: 0; transform: translate(-50%, -12px); }
   to   { opacity: 1; transform: translate(-50%, 0); }
 }
 [data-theme="dark"] .tmpl-toast {

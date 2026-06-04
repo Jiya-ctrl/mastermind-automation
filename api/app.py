@@ -3542,10 +3542,16 @@ DEFAULT_PERSONALISATION_CONFIG = {
     "strip_height_pct": 0.24,           # used when mode = *_strip
     "position":         "bottom",       # bottom | top | center (MVP: bottom only)
     "margin_pct":       0.05,           # distance from edge as fraction of frame height
+    "text_align":       "left",         # left | center | right — horizontal alignment within the strip / overlay
 }
 
+# orange_strip / white_strip are kept in the allow-list for backwards
+# compatibility (any persisted config that still references them won't
+# get rejected) but the UI no longer offers them — they collapsed into
+# custom_strip with a colour preset.
 _ALLOWED_BACKGROUND_MODES = {"on_template", "orange_strip", "white_strip", "custom_strip"}
 _ALLOWED_POSITIONS        = {"bottom", "top", "center"}
+_ALLOWED_TEXT_ALIGNS      = {"left", "center", "right"}
 
 
 def _personalisation_config_path():
@@ -3642,6 +3648,10 @@ def _validate_personalisation_payload(payload):
             else: errors.append("margin_pct must be 0.0-0.30")
         except (TypeError, ValueError):
             errors.append("margin_pct must be a number")
+    if "text_align" in payload:
+        v = (str(payload["text_align"]) or "").strip()
+        if v in _ALLOWED_TEXT_ALIGNS: out["text_align"] = v
+        else: errors.append(f"text_align must be one of {sorted(_ALLOWED_TEXT_ALIGNS)}")
     return out, errors
 
 
