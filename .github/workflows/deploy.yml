@@ -58,6 +58,11 @@ jobs:
             git log -1 --oneline
             echo
             echo "==> Step 2/4: Rebuilding Docker images (using layer cache)"
+            # Tear down containers first — `up --remove-orphans` alone
+            # doesn't kill duplicate-named containers that still have a
+            # claim, which has been the recurring "name already in use"
+            # failure. `down` makes that impossible.
+            docker compose down --remove-orphans || true
             docker compose --env-file .env.production up -d --build --remove-orphans
             echo
             echo "==> Step 3/4: Pruning unused images"
@@ -92,6 +97,7 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             git log -1 --oneline
+            docker compose down --remove-orphans || true
             docker compose --env-file .env.production up -d --build --remove-orphans
             docker image prune -f
             docker compose ps
@@ -119,6 +125,7 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             git log -1 --oneline
+            docker compose down --remove-orphans || true
             docker compose --env-file .env.production up -d --build --remove-orphans
             docker image prune -f
             docker compose ps
