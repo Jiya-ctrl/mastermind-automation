@@ -50,10 +50,9 @@ export default function Settings() {
   // The operator proves identity by typing the current password — the
   // natural gate for an already-logged-in user. The recovery key is
   // reserved for the locked-out flow on the Login page.
-  const [currentPassword,    setCurrentPassword]    = useState('')
-  const [newPassword,        setNewPassword]        = useState('')
-  const [newPasswordConfirm, setNewPasswordConfirm] = useState('')
-  const [updating,           setUpdating]           = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword,     setNewPassword]     = useState('')
+  const [updating,        setUpdating]        = useState(false)
 
   // ---- Storage usage ---------------------------------------------------
   const [stats, setStats] = useState(null)
@@ -96,18 +95,13 @@ export default function Settings() {
   async function handleChangePassword(e) {
     e.preventDefault()
     if (updating) return
-    if (!currentPassword || !newPassword || !newPasswordConfirm) return
-    if (newPassword !== newPasswordConfirm) {
-      showToast('Passwords do not match', 'info')
-      return
-    }
+    if (!currentPassword || !newPassword) return
     setUpdating(true)
     const res = await changePassword(resolvedUserId, currentPassword, newPassword)
     setUpdating(false)
     if (res.ok) {
       setCurrentPassword('')
       setNewPassword('')
-      setNewPasswordConfirm('')
       showToast('Password updated', 'success')
       return
     }
@@ -162,10 +156,9 @@ export default function Settings() {
           <div className="settings-row-text">
             <div className="settings-row-label">Change password</div>
             <div className="settings-row-help">
-              Enter your current password, then the new one (8+ chars with
-              upper, lower, digit, and symbol). If you've forgotten the
-              current password, sign out and use “Forgot password?” on the
-              login page.
+              Type your current password and the new one (8+ chars, mix
+              of upper, lower, digit, and symbol). Forgot it? Sign out
+              and use “Forgot password?” on the login page.
             </div>
           </div>
           <div className="settings-input-grid">
@@ -185,18 +178,10 @@ export default function Settings() {
               onChange={(e) => setNewPassword(e.target.value)}
               autoComplete="new-password"
             />
-            <input
-              type="password"
-              className="settings-input"
-              placeholder="Confirm new password"
-              value={newPasswordConfirm}
-              onChange={(e) => setNewPasswordConfirm(e.target.value)}
-              autoComplete="new-password"
-            />
             <button
               type="submit"
               className="btn btn-secondary settings-action-btn"
-              disabled={updating || !currentPassword || !newPassword || !newPasswordConfirm}
+              disabled={updating || !currentPassword || !newPassword}
             >
               {updating ? 'Updating…' : 'Update password'}
             </button>
