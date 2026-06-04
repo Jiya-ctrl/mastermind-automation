@@ -44,17 +44,11 @@ function bootstrap() {
     // stale (we moved to sessionStorage). Remove it once.
     try { localStorage.removeItem(SESSION_KEY) } catch (_) {}
   } catch (_) {}
-  // Force re-login on every page refresh. PerformanceNavigationTiming
-  // reports `type === 'reload'` for F5 / Ctrl+R / location.reload(), but
-  // not for fresh tab opens — those naturally start with empty
-  // sessionStorage so they already require login.
-  try {
-    const entries = performance.getEntriesByType?.('navigation') || []
-    const nav = entries[0]
-    if (nav && nav.type === 'reload') {
-      try { sessionStorage.removeItem(SESSION_KEY) } catch (_) {}
-    }
-  } catch (_) {}
+  // Refresh-on-F5 used to wipe the session here. Removed — refresh now
+  // keeps the operator signed in (sessionStorage already dies when the
+  // tab closes, which is the real boundary we want). Logout still
+  // happens on tab close, on token expiry (24h default), and on any
+  // 401 from the backend.
 }
 bootstrap()
 
@@ -191,14 +185,17 @@ export async function signIn(userId, password) {
 }
 
 // Knows-current-password change. Used by Settings → Change Password.
+// userId is the canonical user_id (from /auth/me) — callers MUST pass it
+// so the backend's exact-match check against data/auth.json doesn't fail
+// when the stored id isn't the legacy default.
 //   reason: 'wrong-current' | 'weak' | 'backend_offline' | 'network'
-export async function changePassword(currentPassword, newPassword) {
+export async function changePassword(userId, currentPassword, newPassword) {
   try {
     const res = await fetch(`${AUTH_API}/auth/change-password`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
-        user_id:          FIXED_USER_ID,
+        user_id:          (userId || FIXED_USER_ID).trim(),
         current_password: currentPassword,
         new_password:     newPassword,
       }),

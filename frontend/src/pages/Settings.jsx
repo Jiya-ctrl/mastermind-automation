@@ -3,11 +3,11 @@ import PageHeader from '../components/PageHeader'
 import { useTheme } from '../ThemeContext'
 import {
   getFixedUserId,
-  verifyRecoveryKey,
-  completePasswordReset,
+  getSessionToken,
+  changePassword,
 } from '../auth'
 
-import { API_BASE } from '../config'
+import { API_BASE, AUTH_API_BASE } from '../config'
 
 function formatBytes(bytes) {
   if (!bytes || bytes < 1024) return `${bytes || 0} B`
@@ -20,22 +20,40 @@ function formatBytes(bytes) {
 
 export default function Settings() {
   const { theme, toggleTheme } = useTheme()
-  const userIdDisplay = getFixedUserId()
+  // Resolve the canonical user_id from the live session token so the
+  // backend's exact-match check against data/auth.json doesn't fail when
+  // the stored id isn't the legacy default.
+  const [resolvedUserId, setResolvedUserId] = useState(getFixedUserId())
 
-  // Toast for inline feedback (verify success, save errors, etc.).
+  useEffect(() => {
+    const token = getSessionToken()
+    if (!token) return
+    let cancelled = false
+    fetch(`${AUTH_API_BASE}/auth/me`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled) return
+        if (d && d.ok && typeof d.user_id === 'string' && d.user_id) {
+          setResolvedUserId(d.user_id)
+        }
+      })
+      .catch(() => { /* keep fallback */ })
+    return () => { cancelled = true }
+  }, [])
+
+  // Toast for inline feedback (save success, errors, etc.).
   const [toast, setToast] = useState(null)
 
-  // ---- Password change (gated by recovery key) -------------------------
-  // The operator first proves identity with the recovery key. On
-  // success the backend hands back a one-time reset token (stored in
-  // sessionStorage by verifyRecoveryKey) which completePasswordReset
-  // then consumes to set the new password.
-  const [recoveryKey,       setRecoveryKey]       = useState('')
-  const [verifying,         setVerifying]         = useState(false)
-  const [recoveryVerified,  setRecoveryVerified]  = useState(false)
-  const [newPassword,       setNewPassword]       = useState('')
-  const [newPasswordConfirm,setNewPasswordConfirm]= useState('')
-  const [updating,          setUpdating]          = useState(false)
+  // ---- Password change (gated by current password) ---------------------
+  // The operator proves identity by typing the current password — the
+  // natural gate for an already-logged-in user. The recovery key is
+  // reserved for the locked-out flow on the Login page.
+  const [currentPassword,    setCurrentPassword]    = useState('')
+  const [newPassword,        setNewPassword]        = useState('')
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState('')
+  const [updating,           setUpdating]           = useState(false)
 
   // ---- Storage usage ---------------------------------------------------
   const [stats, setStats] = useState(null)
@@ -75,52 +93,30 @@ export default function Settings() {
     setTimeout(() => setToast(null), 2400)
   }
 
-  async function handleVerifyRecovery(e) {
+  async function handleChangePassword(e) {
     e.preventDefault()
-    if (!recoveryKey.trim() || verifying) return
-    setVerifying(true)
-    const res = await verifyRecoveryKey(userIdDisplay, recoveryKey.trim())
-    setVerifying(false)
-    if (res.ok) {
-      setRecoveryVerified(true)
-      showToast('Recovery key verified', 'success')
-      return
-    }
-    let msg = 'Could not verify recovery key'
-    if (res.reason === 'invalid')          msg = 'Recovery key is invalid'
-    else if (res.reason === 'rate_limit')  msg = `Too many attempts — try again in ~${res.retryAfterMin || 5} min`
-    else if (res.reason === 'backend_offline') msg = 'Authentication service offline'
-    else if (res.reason === 'network')     msg = 'Network error'
-    showToast(msg, 'info')
-  }
-
-  async function handleSetNewPassword(e) {
-    e.preventDefault()
-    if (!recoveryVerified || updating) return
+    if (updating) return
+    if (!currentPassword || !newPassword || !newPasswordConfirm) return
     if (newPassword !== newPasswordConfirm) {
       showToast('Passwords do not match', 'info')
       return
     }
     setUpdating(true)
-    const res = await completePasswordReset(newPassword)
+    const res = await changePassword(resolvedUserId, currentPassword, newPassword)
     setUpdating(false)
     if (res.ok) {
-      setRecoveryKey('')
-      setRecoveryVerified(false)
+      setCurrentPassword('')
       setNewPassword('')
       setNewPasswordConfirm('')
       showToast('Password updated', 'success')
       return
     }
     let msg = 'Could not update password'
-    if (res.reason === 'weak')              msg = 'Password must be 8+ chars with upper, lower, digit, symbol'
-    else if (res.reason === 'invalid_token') msg = 'Recovery verification expired — please verify again'
+    if (res.reason === 'wrong-current')        msg = 'Current password is incorrect'
+    else if (res.reason === 'weak')            msg = 'Password must be 8+ chars with upper, lower, digit, symbol'
     else if (res.reason === 'backend_offline') msg = 'Authentication service offline'
-    else if (res.reason === 'network')      msg = 'Network error'
+    else if (res.reason === 'network')         msg = 'Network error'
     showToast(msg, 'info')
-    if (res.reason === 'invalid_token') {
-      setRecoveryVerified(false)
-    }
   }
 
   return (
@@ -158,52 +154,29 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* 2. Account — recovery-key-gated password change ---------------- */}
+      {/* 2. Account — current-password-gated change --------------------- */}
       <section className="dash-card settings-card">
         <div className="settings-section-title">Account</div>
 
-        <form className="settings-row settings-row-stack" onSubmit={handleVerifyRecovery}>
-          <div className="settings-row-text">
-            <div className="settings-row-label">Recovery key</div>
-            <div className="settings-row-help">
-              Paste the recovery key you wrote down at setup. Verifying it
-              unlocks the password change below.
-            </div>
-          </div>
-          <div className="settings-input-group">
-            <input
-              type="text"
-              className="settings-input"
-              value={recoveryKey}
-              onChange={(e) => {
-                setRecoveryKey(e.target.value)
-                if (recoveryVerified) setRecoveryVerified(false)
-              }}
-              placeholder="xxxx-xxxx-xxxx-xxxx"
-              autoComplete="off"
-              spellCheck="false"
-              disabled={recoveryVerified}
-            />
-            <button
-              type="submit"
-              className="btn btn-secondary settings-action-btn"
-              disabled={verifying || recoveryVerified || !recoveryKey.trim()}
-            >
-              {recoveryVerified ? '✓ Verified' : verifying ? 'Verifying…' : 'Verify'}
-            </button>
-          </div>
-        </form>
-
-        <form className="settings-row settings-row-stack" onSubmit={handleSetNewPassword}>
+        <form className="settings-row settings-row-stack" onSubmit={handleChangePassword}>
           <div className="settings-row-text">
             <div className="settings-row-label">Change password</div>
             <div className="settings-row-help">
-              {recoveryVerified
-                ? 'Enter the new password (8+ chars with upper, lower, digit, and symbol).'
-                : 'Verify your recovery key above to unlock this form.'}
+              Enter your current password, then the new one (8+ chars with
+              upper, lower, digit, and symbol). If you've forgotten the
+              current password, sign out and use “Forgot password?” on the
+              login page.
             </div>
           </div>
           <div className="settings-input-grid">
+            <input
+              type="password"
+              className="settings-input"
+              placeholder="Current password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              autoComplete="current-password"
+            />
             <input
               type="password"
               className="settings-input"
@@ -211,7 +184,6 @@ export default function Settings() {
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               autoComplete="new-password"
-              disabled={!recoveryVerified}
             />
             <input
               type="password"
@@ -220,12 +192,11 @@ export default function Settings() {
               value={newPasswordConfirm}
               onChange={(e) => setNewPasswordConfirm(e.target.value)}
               autoComplete="new-password"
-              disabled={!recoveryVerified}
             />
             <button
               type="submit"
               className="btn btn-secondary settings-action-btn"
-              disabled={!recoveryVerified || updating || !newPassword || !newPasswordConfirm}
+              disabled={updating || !currentPassword || !newPassword || !newPasswordConfirm}
             >
               {updating ? 'Updating…' : 'Update password'}
             </button>
