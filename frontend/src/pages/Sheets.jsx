@@ -573,9 +573,14 @@ export default function Sheets() {
 
   async function cancelJob() {
     if (!job || !job.id) return
+    // Immediate UI feedback — flip to a transient cancelling state so the
+    // operator sees the click landed even before the backend round-trips.
+    // The polling loop will then converge to job.state === 'cancelled'
+    // (or stay 'cancelled' if it was already set on the next poll).
+    setJob((j) => (j ? { ...j, state: 'cancelled', paused: false } : j))
     try {
       await fetch(`${API_BASE}/generate-jobs/${job.id}/cancel`, { method: 'POST' })
-    } catch { /* ignore */ }
+    } catch { /* ignore — UI already reflects the intent */ }
   }
 
   // ---------- derived state ----------
