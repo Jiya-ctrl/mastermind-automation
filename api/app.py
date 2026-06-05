@@ -1618,7 +1618,14 @@ def generate_videos():
 # ---------------------------------------------------------------------------
 
 def _scan_output_dir(dir_path, allowed_exts):
-    """Return { stem (without ext): {filename, size, mtime} } for non-empty files."""
+    """Return { stem (without ext): {filename, size, mtime} } for non-empty files.
+
+    Skips `.partial.mp4` scratch files written by video_generator.py
+    while an encode is in flight (or left over from a crashed encode).
+    Without this filter the worker would happily pick up the half-baked
+    file and ship it to Meta — exactly the bug that caused the
+    Subhash_Nagar_Barshi.mp4.partial.mp4 row to surface in the UI.
+    """
     result = {}
     if not os.path.isdir(dir_path):
         return result
@@ -1632,6 +1639,11 @@ def _scan_output_dir(dir_path, allowed_exts):
             continue
         stem, ext = os.path.splitext(entry)
         if ext.lower() not in allowed_exts:
+            continue
+        # Ignore in-flight / leftover encoder scratch files. The
+        # video_generator writes to <real_stem>.mp4.partial.mp4 and
+        # only renames to <real_stem>.mp4 once ffprobe validates it.
+        if stem.endswith(".partial") or ".partial." in stem.lower() or entry.endswith(".partial.mp4"):
             continue
         try:
             size = os.path.getsize(full)
