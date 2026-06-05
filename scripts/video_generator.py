@@ -452,6 +452,15 @@ else:
     overlay_filter = "ass=overlay.ass"
     print("Filter: ass overlay only (text on template)")
 
+# Encode to a .partial.mp4 first; only after the encode finishes AND
+# ffprobe confirms a valid moov atom do we rename it to the real
+# output path. Without this, a killed/crashed ffmpeg leaves a
+# truncated file at output_path that the delivery worker happily
+# ships to Meta — Meta then returns "Media upload error" because the
+# moov atom is missing. Atomic rename + post-encode validation makes
+# that failure mode impossible.
+partial_path = output_path + ".partial.mp4"
+
 cmd = [
     ffmpeg_path,
     "-y",
@@ -471,12 +480,17 @@ cmd = [
     # Faststart moves moov atom to file head so Meta + recipients can
     # start playing before the full download completes.
     "-movflags", "+faststart",
-    output_path,
+    partial_path,
 ]
 
 # Remove any stale output so we can prove a fresh file was created.
-if os.path.exists(output_path):
-    os.remove(output_path)
+# Also wipe any leftover .partial from a previous crashed run.
+for stale in (output_path, partial_path):
+    if os.path.exists(stale):
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
 
 print("Running ffmpeg with the following command:")
 for token in cmd:
@@ -489,7 +503,28 @@ shutil.rmtree(work_dir, ignore_errors=True)
 
 if result.returncode != 0:
     print("ffmpeg failed with exit code", result.returncode)
+    if os.path.exists(partial_path):
+        os.remove(partial_path)
     sys.exit(result.returncode)
+
+# Validate the encoded file is actually playable BEFORE swapping it
+# into the final path. ffprobe with `-show_format` reads the moov
+# atom; if it's missing or unreadable, ffprobe exits non-zero and we
+# refuse to publish the corrupt file.
+print("[validate] ffprobe-checking the encoded file before publishing")
+probe = subprocess.run(
+    [ffprobe_path, "-v", "error", "-show_format", "-show_streams", partial_path],
+    capture_output=True,
+)
+if probe.returncode != 0:
+    err = probe.stderr.decode("utf-8", errors="replace").strip()
+    print(f"[validate] FAILED — refusing to publish a corrupt mp4: {err!r}")
+    try: os.remove(partial_path)
+    except OSError: pass
+    sys.exit(2)
+
+# All checks passed — atomically rename the .partial into place.
+os.replace(partial_path, output_path)
 
 # Hard guarantee: never ship a file over the WhatsApp ceiling. Single
 # fallback re-encode at a tighter cap if the first pass overshot (e.g.
