@@ -64,6 +64,15 @@ jobs:
             # failure. `down` makes that impossible.
             docker compose down --remove-orphans || true
             docker compose --env-file .env.production up -d --build --remove-orphans
+            # After every `down`+`up`, Traefik on this VPS holds stale
+            # connections to the OLD container IPs and returns 502/404
+            # until restarted. Bouncing Traefik forces service rediscovery.
+            sleep 5
+            TRAEFIK_ID=$(docker ps --filter "name=traefik" -q | head -1)
+            if [ -n "$TRAEFIK_ID" ]; then
+              echo "==> Restarting Traefik ($TRAEFIK_ID) to refresh routes"
+              docker restart "$TRAEFIK_ID" || true
+            fi
             echo
             echo "==> Step 3/4: Pruning unused images"
             docker image prune -f
@@ -99,6 +108,15 @@ jobs:
             git log -1 --oneline
             docker compose down --remove-orphans || true
             docker compose --env-file .env.production up -d --build --remove-orphans
+            # After every `down`+`up`, Traefik on this VPS holds stale
+            # connections to the OLD container IPs and returns 502/404
+            # until restarted. Bouncing Traefik forces service rediscovery.
+            sleep 5
+            TRAEFIK_ID=$(docker ps --filter "name=traefik" -q | head -1)
+            if [ -n "$TRAEFIK_ID" ]; then
+              echo "==> Restarting Traefik ($TRAEFIK_ID) to refresh routes"
+              docker restart "$TRAEFIK_ID" || true
+            fi
             docker image prune -f
             docker compose ps
             echo "==> Deploy complete (attempt 2)."
@@ -127,6 +145,15 @@ jobs:
             git log -1 --oneline
             docker compose down --remove-orphans || true
             docker compose --env-file .env.production up -d --build --remove-orphans
+            # After every `down`+`up`, Traefik on this VPS holds stale
+            # connections to the OLD container IPs and returns 502/404
+            # until restarted. Bouncing Traefik forces service rediscovery.
+            sleep 5
+            TRAEFIK_ID=$(docker ps --filter "name=traefik" -q | head -1)
+            if [ -n "$TRAEFIK_ID" ]; then
+              echo "==> Restarting Traefik ($TRAEFIK_ID) to refresh routes"
+              docker restart "$TRAEFIK_ID" || true
+            fi
             docker image prune -f
             docker compose ps
             echo "==> Deploy complete (attempt 3)."
