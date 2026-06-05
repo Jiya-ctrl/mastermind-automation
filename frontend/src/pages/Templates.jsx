@@ -197,24 +197,13 @@ export default function Templates() {
       setSavedInfo({ path: data.path, bytes: data.bytes, kind: data.kind })
       setSavedAt(new Date())
       showToast(`${mode === 'video' ? 'Video' : 'Image'} template saved`)
-      // Hydrate the persistent slot directly from the upload response so
-      // we don't pay for a second round-trip. The fields we need are all
-      // already in `data` — only the URL needs reconstructing from the
-      // returned filename, matching what /current-template would have
-      // returned anyway.
-      if (data.filename || data.url) {
-        setRemote((prev) => ({
-          ...prev,
-          [mode]: {
-            filename: data.filename || file.name,
-            url:      data.url || `/templates/${data.filename || file.name}`,
-            size:     data.bytes || file.size,
-            mtime:    Date.now() / 1000,
-          },
-        }))
-      } else {
-        // Fallback: backend didn't echo enough — re-fetch.
-        const fresh = await fetchCurrent(mode)
+      // Re-fetch via /current-template so we get the SIGNED url the
+      // gallery preview needs. Reconstructing the URL client-side was
+      // a tempting micro-optimisation but it produced an unsigned path
+      // that the /files/templates gate rejected, leaving the preview
+      // broken after save.
+      const fresh = await fetchCurrent(mode)
+      if (fresh) {
         setRemote((prev) => ({ ...prev, [mode]: fresh }))
       }
     } catch (e) {

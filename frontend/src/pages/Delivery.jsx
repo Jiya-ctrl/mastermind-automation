@@ -763,30 +763,6 @@ export default function Delivery() {
             >
               📜 {historyMode ? 'History on' : 'History'}
             </button>
-            {historyMode && (
-              <>
-                <button
-                  type="button"
-                  className="btn btn-ghost gen-banner-btn"
-                  onClick={exportPdf}
-                  disabled={items.length === 0}
-                  title="Export the current view as a printable PDF"
-                >
-                  📄 Export PDF
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost gen-banner-btn dlv-delete-history-btn"
-                  onClick={clearAll}
-                  disabled={acting || items.length === 0}
-                  title={items.length === 0
-                    ? 'No history to delete'
-                    : `Delete the entire history (${items.length} rows)`}
-                >
-                  🗑 Delete History
-                </button>
-              </>
-            )}
             <button
               type="button"
               className="btn btn-ghost gen-banner-btn"
@@ -806,6 +782,40 @@ export default function Delivery() {
       {error && (
         <div className="tmpl-error" role="alert">
           <span aria-hidden="true">⚠️</span> {error}
+        </div>
+      )}
+
+      {/* Secondary toolbar — only visible when History mode is on. Keeps
+          the orange banner uncluttered (the previous attempt to stuff
+          Export PDF + Delete History into the banner actions squeezed
+          the title down to a one-letter-per-line column). */}
+      {historyMode && (
+        <div className="dlv-history-toolbar" role="toolbar" aria-label="History actions">
+          <div className="dlv-history-toolbar-label">
+            <span aria-hidden="true">📜</span> History view — {items.length} {items.length === 1 ? 'row' : 'rows'}
+          </div>
+          <div className="dlv-history-toolbar-actions">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={exportPdf}
+              disabled={items.length === 0}
+              title="Export the current view as a printable PDF"
+            >
+              📄 Export PDF
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary dlv-delete-history-btn"
+              onClick={clearAll}
+              disabled={acting || items.length === 0}
+              title={items.length === 0
+                ? 'No history to delete'
+                : `Delete the entire history (${items.length} rows)`}
+            >
+              🗑 Delete History
+            </button>
+          </div>
         </div>
       )}
 
