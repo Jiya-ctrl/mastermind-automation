@@ -360,6 +360,31 @@ export default function Sheets() {
     return () => { if (jobTimerRef.current) clearInterval(jobTimerRef.current) }
   }, [])
 
+  // On Sheets-page mount, ask the backend whether a generation job is
+  // still in flight. Without this, navigating away mid-job and coming
+  // back leaves the progress card invisible — the worker keeps chugging
+  // but the operator can't see (or cancel) it, so the next Generate
+  // click trips the 409 "another job is already running" guard with no
+  // affordance to do anything about it. Resuming polling on mount makes
+  // the progress card show up again with a live Cancel button.
+  useEffect(() => {
+    let cancelled = false
+    async function resumeActiveJob() {
+      try {
+        const res = await fetch(`${API_BASE}/generate-jobs/active`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (cancelled) return
+        if (data && data.status === 'success' && data.active && data.active.id) {
+          setJob(data.active)
+          pollJob(data.active.id)
+        }
+      } catch { /* ignore — best-effort restore */ }
+    }
+    resumeActiveJob()
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Compute the menu's fixed-position coords from the trigger's rect, and
   // close on outside click / Escape / scroll / resize.
   useEffect(() => {
@@ -436,6 +461,32 @@ export default function Sheets() {
         body:    JSON.stringify({ recipients: rowsToGenerate, kind }),
       })
       const data = await res.json().catch(() => ({}))
+      // Special case: the backend refuses with 409 when another job is
+      // still in flight. Instead of just surfacing the bare error, pick
+      // up the running job and start polling it — that puts the live
+      // progress card (with its Cancel button) back on screen so the
+      // operator can actually act on the "another job is already
+      // running" message.
+      if (res.status === 409 && data && data.running_job_id) {
+        setError(
+          `A previous generation run is still in progress — resume tracking below, or click Cancel.`
+        )
+        try {
+          const peek = await fetch(`${API_BASE}/generate-jobs/${data.running_job_id}`)
+          if (peek.ok) {
+            const peekData = await peek.json()
+            setJob(peekData)
+          } else {
+            setJob({ id: data.running_job_id, state: 'running',
+                     progress: data.progress || 0, total: data.total || 0 })
+          }
+        } catch {
+          setJob({ id: data.running_job_id, state: 'running',
+                   progress: data.progress || 0, total: data.total || 0 })
+        }
+        pollJob(data.running_job_id)
+        return
+      }
       if (!res.ok || !data.job_id) {
         throw new Error(data.error || `HTTP ${res.status}`)
       }

@@ -466,36 +466,35 @@ def upload_template():
             "error": f"file is {size} bytes; max {MAX_UPLOAD_BYTES} bytes (200 MB)",
         }), 413
 
-    # Read file into memory and encode as base64 for persistent storage in settings.json
-    file_data = f.read()
-    file_b64 = __import__('base64').b64encode(file_data).decode('ascii')
-    
-    # Also save to temp location for immediate availability in generators
+    # Stream the upload straight to disk — no base64 round-trip via
+    # settings.json. The old code held the entire file in memory, base64-
+    # encoded it (+33% RAM), wrote 14+ MB of JSON, and held the settings
+    # lock the whole time. For an 11 MB video that's 10-20 s on the VPS.
+    # The base64 was a Vercel-serverless fallback we no longer need now
+    # that the backend has a real filesystem.
     os.makedirs(TEMPLATES_DIR, exist_ok=True)
     target_name = f"uploaded_{kind}{ext}"
     target_path = os.path.join(TEMPLATES_DIR, target_name)
-    with open(target_path, 'wb') as fp:
-        fp.write(file_data)
+    f.save(target_path)  # Werkzeug streams without slurping into memory
 
     saved_size = os.path.getsize(target_path)
     rel_path = f"templates/{target_name}".replace("\\", "/")
 
-    # Update settings.json with both the path AND the base64-encoded file content
-    # so it survives Vercel serverless invocations
+    # Settings.json only stores the PATH now. If a deploy ever loses the
+    # templates/ dir (volume mount misconfigured), the operator just re-
+    # uploads — no silent half-restore from a stale base64 blob.
     settings = _load_settings()
-    template_key = f"template_{kind}"
-    data_key = f"template_{kind}_data"
-    filename_key = f"template_{kind}_filename"
-    
-    settings[template_key] = rel_path
-    settings[data_key] = file_b64  # base64-encoded file content
-    settings[filename_key] = f.filename  # original filename
-    
+    settings[f"template_{kind}"]          = rel_path
+    settings[f"template_{kind}_filename"] = f.filename
+    # Defensive cleanup: strip any legacy base64 blob a prior version of
+    # this endpoint may have written, so /current-template doesn't try to
+    # restore an out-of-date copy on top of the fresh file.
+    settings.pop(f"template_{kind}_data", None)
     _save_settings(settings)
 
     print(
         f"[/upload-template] kind={kind} saved={target_path} bytes={saved_size} "
-        f"-> settings.template_{kind} = {rel_path} (with base64 fallback)",
+        f"-> settings.template_{kind} = {rel_path} (streamed)",
         flush=True,
     )
 
@@ -1391,6 +1390,37 @@ def _evict_oldest_jobs():
         while len(_JOBS) > _MAX_JOBS and finished:
             victim = finished.pop(0)
             _JOBS.pop(victim["id"], None)
+
+
+@app.route("/generate-jobs/active", methods=["GET"])
+def generate_jobs_active():
+    """Return the currently in-flight job (pending/running), if any. The
+    Sheets page hits this on mount so progress is restored when the
+    operator navigates away and comes back — otherwise the progress
+    card disappears even though the backend worker is still chugging."""
+    _STALE_MS = 10 * 60 * 1000
+    now_ms = int(time.time() * 1000)
+    with _JOBS_LOCK:
+        for j in _JOBS.values():
+            state = (j.get("state") or "").lower()
+            if state not in ("pending", "running"):
+                continue
+            updated = int(j.get("updatedAt") or j.get("createdAt") or now_ms)
+            if now_ms - updated > _STALE_MS:
+                j["state"]      = "error"
+                j["error"]      = "job stalled — auto-expired by server"
+                j["finishedAt"] = now_ms
+                j["updatedAt"]  = now_ms
+                _persist_job(j)
+        active = [
+            j for j in _JOBS.values()
+            if (j.get("state") or "").lower() in ("pending", "running")
+        ]
+    if not active:
+        return jsonify({"status": "success", "active": None})
+    # Most-recently-created wins on the off chance two slipped through.
+    active.sort(key=lambda j: int(j.get("createdAt") or 0), reverse=True)
+    return jsonify({"status": "success", "active": active[0]})
 
 
 @app.route("/generate-jobs", methods=["POST"])
