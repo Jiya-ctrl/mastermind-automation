@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -247,27 +248,48 @@ def _run_generator(script_path, address, phone, name=""):
 
     The generators accept argv[1]=address, argv[2]=phone, argv[3]=name
     (optional). When name is empty the generator falls back to the
-    legacy two-line layout, preserving backward compatibility."""
-    cmd = [sys.executable, script_path, address, phone]
+    legacy two-line layout, preserving backward compatibility.
+
+    CRITICAL — pipe deadlock fix:
+      `capture_output=True` was deadlocking video generation. ffmpeg
+      writes hundreds of progress lines to stderr; the OS pipe buffer
+      fills at ~64 KB; ffmpeg blocks on its next write; subprocess.run
+      waits for the child to exit before reading the pipe; everything
+      hangs forever (manual `docker exec python …` works because stderr
+      goes straight to the TTY with no pipe in the path).
+      Fix: capture stdout via a pipe (small — just print() output we
+      use to detect the output path) but stream stderr to a tempfile
+      (no pipe buffer = no deadlock; we read the file once the child
+      exits). Also pass `-u` so the child's stdout is line-buffered
+      and we get the path line promptly even for very chatty runs.
+    """
+    cmd = [sys.executable, "-u", script_path, address, phone]
     if name:
         cmd.append(name)
+
+    stderr_file = tempfile.SpooledTemporaryFile(max_size=4 * 1024 * 1024, mode="w+")
     try:
         proc = subprocess.run(
             cmd,
             cwd=PROJECT_ROOT,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=stderr_file,
             text=True,
             timeout=TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as e:
+        stderr_file.seek(0)
+        late_stderr = stderr_file.read() if hasattr(stderr_file, "read") else ""
+        stderr_file.close()
         return {
             "ok": False,
             "stdout": e.stdout or "",
-            "stderr": f"timed out after {TIMEOUT_SECONDS}s",
+            "stderr": (late_stderr[-4000:] if late_stderr else f"timed out after {TIMEOUT_SECONDS}s"),
             "path": None,
             "returncode": None,
         }
     except FileNotFoundError as e:
+        stderr_file.close()
         return {
             "ok": False,
             "stdout": "",
@@ -276,13 +298,20 @@ def _run_generator(script_path, address, phone, name=""):
             "returncode": None,
         }
 
+    # Drain stderr from the tempfile. SpooledTemporaryFile keeps small
+    # output in RAM and only spills to disk if it grows past max_size,
+    # so this is fast for the typical "single ffmpeg run" case.
+    stderr_file.seek(0)
+    stderr = stderr_file.read()
+    stderr_file.close()
     stdout = proc.stdout or ""
-    stderr = proc.stderr or ""
     match = _PATH_RE.search(stdout)
     return {
         "ok": proc.returncode == 0,
         "stdout": stdout,
-        "stderr": stderr,
+        # Trim stderr to the last 4 KB — useful for diagnostics, but
+        # we don't need 500 KB of ffmpeg progress in the job result.
+        "stderr": stderr[-4000:] if stderr else "",
         "path": match.group(1).strip() if match else None,
         "returncode": proc.returncode,
     }
