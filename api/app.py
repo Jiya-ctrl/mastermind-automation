@@ -1382,7 +1382,30 @@ def generate_jobs_create():
     # which is exactly what was bricking generation in production.
     # Only "pending" and "running" count as in-flight; "done" /
     # "error" / "cancelled" jobs are inert and don't block.
+    #
+    # Stale-job sweep: a job that hasn't updated for >10 minutes is
+    # almost certainly a zombie left over from a crashed worker or
+    # killed container. Auto-mark those as "error" before evaluating
+    # the in-flight set so they don't block new work forever.
+    _STALE_MS = 10 * 60 * 1000
+    now_ms = int(time.time() * 1000)
     with _JOBS_LOCK:
+        for j in _JOBS.values():
+            state = (j.get("state") or "").lower()
+            if state not in ("pending", "running"):
+                continue
+            updated = int(j.get("updatedAt") or j.get("createdAt") or now_ms)
+            if now_ms - updated > _STALE_MS:
+                print(
+                    f"[/generate-jobs] auto-expiring stale job {j.get('id')} "
+                    f"(state={state}, idle for {(now_ms - updated) // 1000}s)",
+                    flush=True,
+                )
+                j["state"]       = "error"
+                j["error"]       = "job stalled — auto-expired by server"
+                j["finishedAt"]  = now_ms
+                j["updatedAt"]   = now_ms
+                _persist_job(j)
         in_flight = [
             j for j in _JOBS.values()
             if (j.get("state") or "").lower() in ("pending", "running")
