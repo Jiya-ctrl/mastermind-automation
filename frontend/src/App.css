@@ -10799,6 +10799,13 @@ html, body { overflow-x: hidden; max-width: 100vw; }
   color: rgba(255, 255, 255, 0.60);
 }
 
+/* Defensive kill-switch for any stale cached build that still renders
+   the old floating .tmpl-toast div. The new code paths never mount it,
+   but operators on slow/aggressive caches were seeing the leftover
+   pill stretched across the page banner. !important + display:none so
+   any cached CSS that fights this also loses. */
+.tmpl-toast { display: none !important; }
+
 /* Inline "✓ Saved" badge — sits in the same action row as Save Template
    / Proceed → so the operator sees the confirmation right where they
    clicked, no floating layer drifting across the orange banner. */

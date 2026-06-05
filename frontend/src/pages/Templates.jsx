@@ -41,23 +41,10 @@ export default function Templates() {
   const [savedInfo, setSavedInfo] = useState(null) // { path, bytes, kind }
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
-  // Transient post-save toast — replaces the persistent green "Saved" badge.
-  // Auto-dismisses after a short window so the page stays clean.
-  const [toast, setToast] = useState(null) // { message } | null
-  const toastTimerRef = useRef(null)
   // Persistent saved-template state from backend. Each entry:
   // { filename, url, size, mtime } or null.
   const [remote, setRemote] = useState({ video: null, image: null })
   const inputRef = useRef(null)
-
-  function showToast(message) {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-    setToast({ message })
-    toastTimerRef.current = setTimeout(() => setToast(null), 2400)
-  }
-  useEffect(() => () => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-  }, [])
 
   // Fetch one kind from /current-template. 404 → null entry; non-404 errors
   // bubble to the operator-facing error banner.
@@ -173,7 +160,6 @@ export default function Templates() {
       // so the Proceed → CTA appears, and let the operator continue
       // exploring the UI without an upload round-trip.
       setSavedAt(new Date())
-      showToast('Saved in this session — backend not connected')
       activeSlot.setSlot({
         ...activeSlot.slot,
         savedAt: Date.now(),
@@ -196,7 +182,6 @@ export default function Templates() {
       }
       setSavedInfo({ path: data.path, bytes: data.bytes, kind: data.kind })
       setSavedAt(new Date())
-      showToast(`${mode === 'video' ? 'Video' : 'Image'} template saved`)
       // Re-fetch via /current-template so we get the SIGNED url the
       // gallery preview needs. Reconstructing the URL client-side was
       // a tempting micro-optimisation but it produced an unsigned path
