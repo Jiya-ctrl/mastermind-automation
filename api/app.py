@@ -113,7 +113,7 @@ if os.environ.get("VERCEL") == "1":
         with open(SETTINGS_PATH, "w") as f: f.write("{}")
 else:
     os.makedirs(JOBS_DIR, exist_ok=True)
-TIMEOUT_SECONDS  = 180  # full image+video render ceiling
+TIMEOUT_SECONDS  = 600  # full image+video render ceiling (10 min/recipient)
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # matches the frontend dropzone copy
 
 # Extensions we recognise as "generated outputs" — anything else in the folder

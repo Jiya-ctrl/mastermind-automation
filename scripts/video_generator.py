@@ -464,26 +464,24 @@ partial_path = output_path + ".partial.mp4"
 cmd = [
     ffmpeg_path,
     "-y",
-    # Cap CPU + memory footprint so encoding fits on a 1-2 GB Hostinger
-    # VPS. Without -threads, libx264 spawns one worker per core and each
-    # holds its own slice of the lookahead buffer — easy to OOM the
-    # container. 2 threads keeps encode times reasonable while leaving
-    # Flask + Traefik + the rest of the stack headroom.
-    "-threads", "2",
+    # Cap thread count so a parallel job can't pin every core, but use
+    # `ultrafast` so the per-recipient encode finishes in well under a
+    # minute on this VPS. Earlier `veryfast` + heavy x264 buffers were
+    # pushing each render past the 180 s subprocess timeout — jobs
+    # would sit at 0/N for minutes and then look "stuck". ultrafast is
+    # ~2x faster, costs ~10% file size at our bitrate, and uses LESS
+    # RAM than veryfast, so the OOM concern that originally drove the
+    # tightening goes away with it.
+    "-threads", "3",
     "-i", template_path,
     "-vf", overlay_filter,
     # Video re-encode with quality-aware bitrate ceiling
     "-c:v", "libx264",
-    "-preset", "veryfast",                 # lower memory than "fast", small quality cost
+    "-preset", "ultrafast",                # fastest preset; smallest RAM footprint too
     "-crf", "26",                          # good quality; overridden by maxrate cap when needed
     "-maxrate", f"{target_maxrate}k",
     "-bufsize", f"{target_bufsize}k",
     "-pix_fmt", "yuv420p",                 # broad device + WhatsApp compatibility
-    # x264 buffer caps — these are the big OOM levers. Default lookahead
-    # is 40, default ref-frames is up to 16. Trimming both drops peak
-    # RAM by ~3x at minimal quality cost for this content (talking head
-    # over an overlay).
-    "-x264-params", "rc-lookahead=10:ref=3:bframes=2",
     # Audio re-encode at fixed bitrate (gracefully no-ops if input has no audio)
     "-c:a", "aac",
     "-b:a", f"{AUDIO_BITRATE_KBPS}k",
