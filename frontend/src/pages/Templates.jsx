@@ -320,6 +320,11 @@ export default function Templates() {
                 <span>{prettySize(file.size)}</span>
               </div>
               <div className="tmpl-preview-actions">
+                {savedAt && (
+                  <span className="tmpl-saved-inline" role="status" aria-live="polite">
+                    <span className="tmpl-saved-tick" aria-hidden="true">✓</span> Saved
+                  </span>
+                )}
                 <button
                   type="button"
                   className="btn btn-secondary"
@@ -407,13 +412,6 @@ export default function Templates() {
           Your uploaded template will be used for personalised media generation
         </p>
       </section>
-
-      {toast && (
-        <div className="tmpl-toast" role="status" aria-live="polite">
-          <span className="tmpl-toast-tick" aria-hidden="true">✓</span>
-          {toast.message}
-        </div>
-      )}
     </>
   )
 }
