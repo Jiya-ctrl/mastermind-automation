@@ -480,6 +480,70 @@ export default function Delivery() {
     }
   }
 
+  // Export the current row list as a printable PDF. We hand the data to
+  // a new browser window styled for print, then call window.print() —
+  // the operator can hit "Save as PDF" in the browser dialog. No PDF
+  // library dependency, no backend roundtrip, works offline.
+  function exportPdf() {
+    if (!items || items.length === 0) {
+      showToast('Nothing to export — queue is empty', 'info')
+      return
+    }
+    // Use the currently filtered+grouped row list so the PDF matches the
+    // operator's on-screen view (history grouping respected).
+    const exportRows = rows.length > 0 ? rows : items
+    const now = new Date()
+    const stamp = `${now.toLocaleDateString()} ${now.toLocaleTimeString()}`
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]))
+    }
+    const trs = exportRows.map((r) => {
+      const name  = esc(r.recipient_name || r.name || '—')
+      const phone = esc(r.recipient_phone || r.phone || '—')
+      const kind  = esc((rowMediaKind(r) || '—').toUpperCase())
+      const file  = esc(rowMediaFilename(r) || '—')
+      const status = esc(r.status || '—')
+      const when = r.deliveredAt || r.sentAt || r.updatedAt || r.createdAt
+      const whenStr = when ? new Date(when).toLocaleString() : '—'
+      return `<tr><td>${name}</td><td>${phone}</td><td>${kind}</td><td>${file}</td><td>${status}</td><td>${whenStr}</td></tr>`
+    }).join('')
+
+    const html = `<!doctype html><html><head><meta charset="utf-8"/>
+<title>WhatsApp Delivery — ${stamp}</title>
+<style>
+ *{box-sizing:border-box}
+ body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0B1C30;padding:28px;margin:0}
+ h1{margin:0 0 4px 0;font-size:20px}
+ .sub{color:#6B5C50;font-size:12px;margin-bottom:18px}
+ table{width:100%;border-collapse:collapse;font-size:12px}
+ th,td{padding:8px 10px;border-bottom:1px solid rgba(15,23,42,.10);text-align:left;vertical-align:top}
+ th{background:#F7F4ED;font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-size:11px;color:#584237}
+ tr:nth-child(even) td{background:#FAFAF7}
+ @media print{ body{padding:16px} }
+</style></head><body>
+<h1>WhatsApp Delivery Report</h1>
+<div class="sub">Generated ${esc(stamp)} · ${exportRows.length} ${exportRows.length === 1 ? 'row' : 'rows'}</div>
+<table>
+ <thead><tr><th>Recipient</th><th>Phone</th><th>Media</th><th>Filename</th><th>Status</th><th>Time</th></tr></thead>
+ <tbody>${trs}</tbody>
+</table>
+<script>window.onload=function(){setTimeout(function(){window.print()},250)}</script>
+</body></html>`
+
+    const w = window.open('', '_blank', 'width=900,height=700')
+    if (!w) {
+      showToast('Pop-up blocked — allow pop-ups to export PDF', 'error')
+      return
+    }
+    w.document.open()
+    w.document.write(html)
+    w.document.close()
+    showToast('Opening print dialog — choose "Save as PDF"', 'info')
+  }
+
   async function toggleWorker() {
     if (!worker) return
     setError(null)
@@ -558,11 +622,24 @@ export default function Delivery() {
     <>
       <PageHeader
         title="WhatsApp Delivery"
-        subtitle={
-          worker
-            ? `Provider: ${worker.provider} · Worker ${worker.alive ? 'running' : 'stopped'}${schemaV ? ` · schema v${schemaV}` : ''} · ${items.length} rows`
-            : 'Per-recipient WhatsApp delivery state.'
-        }
+        subtitle={(() => {
+          // Operator-facing summary: how the queue actually looks right
+          // now. Replaces the old "Provider / worker / schema vN" debug
+          // line, which leaked internal plumbing.
+          if (!items || items.length === 0) {
+            return 'No deliveries yet — generate personalised media first, then send from here.'
+          }
+          const delivered = (counts.Delivered || 0) + (counts['Media Sent'] || 0)
+          const awaiting  = counts['Awaiting Reply'] || 0
+          const failed    = counts.Failed || 0
+          const inFlight  = (counts.Queued || 0) + (counts.Sending || 0)
+          const bits = [`${items.length} ${items.length === 1 ? 'recipient' : 'recipients'}`]
+          if (delivered > 0) bits.push(`${delivered} delivered`)
+          if (awaiting > 0)  bits.push(`${awaiting} awaiting reply`)
+          if (inFlight > 0)  bits.push(`${inFlight} in progress`)
+          if (failed > 0)    bits.push(`${failed} failed`)
+          return bits.join(' · ')
+        })()}
         actions={
           <>
             {/* Inline send-gap stepper — same backend knob as the
@@ -686,6 +763,30 @@ export default function Delivery() {
             >
               📜 {historyMode ? 'History on' : 'History'}
             </button>
+            {historyMode && (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-ghost gen-banner-btn"
+                  onClick={exportPdf}
+                  disabled={items.length === 0}
+                  title="Export the current view as a printable PDF"
+                >
+                  📄 Export PDF
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost gen-banner-btn dlv-delete-history-btn"
+                  onClick={clearAll}
+                  disabled={acting || items.length === 0}
+                  title={items.length === 0
+                    ? 'No history to delete'
+                    : `Delete the entire history (${items.length} rows)`}
+                >
+                  🗑 Delete History
+                </button>
+              </>
+            )}
             <button
               type="button"
               className="btn btn-ghost gen-banner-btn"

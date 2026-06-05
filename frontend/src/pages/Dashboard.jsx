@@ -32,13 +32,21 @@ function statusIcon(s) {
 }
 
 // Map canonical statuses → the shorter labels the Dashboard pill uses.
+// The backend can emit a wider set of statuses than the original three
+// (Read/Media Sent/Awaiting Reply come from Meta callbacks) — they all
+// need to land in the right pill or the operator sees stale "Pending"
+// on rows that have actually been delivered + read.
 function dashboardStatusLabel(status) {
   switch (status) {
-    case 'Delivered': return 'Sent'
-    case 'Sending':   return 'Pending'
-    case 'Queued':    return 'Pending'
-    case 'Failed':    return 'Failed'
-    default:          return 'Pending'
+    case 'Delivered':
+    case 'Read':
+    case 'Sent':
+    case 'Media Sent':       return 'Sent'
+    case 'Sending':
+    case 'Queued':
+    case 'Awaiting Reply':   return 'Pending'
+    case 'Failed':           return 'Failed'
+    default:                 return 'Pending'
   }
 }
 
@@ -258,42 +266,6 @@ export default function Dashboard() {
                       <span className="op-pill-dot" aria-hidden="true">{statusIcon(label)}</span>
                       {label}
                     </span>
-                    <div className="op-row-actions">
-                      {g.video?.url && (
-                        <a
-                          className="op-mini-btn op-mini-btn-play"
-                          href={`${API_BASE}${g.video.url}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          title="Preview"
-                          aria-label="Preview video"
-                        >
-                          <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
-                            <path d="M3.2 2.1 L10 6 L3.2 9.9 Z" fill="currentColor" />
-                          </svg>
-                        </a>
-                      )}
-                      {g.video?.url && (
-                        <a
-                          className="op-mini-btn op-mini-btn-download"
-                          href={`${API_BASE}${g.video.url}`}
-                          download
-                          title="Download"
-                          aria-label="Download video"
-                        >
-                          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                            <path
-                              d="M8 2.4 V10 M4.8 6.8 L8 10 L11.2 6.8 M3.4 13.2 H12.6"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        </a>
-                      )}
-                    </div>
                   </li>
                 )
               })}
