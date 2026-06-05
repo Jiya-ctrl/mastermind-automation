@@ -1376,6 +1376,33 @@ def generate_jobs_create():
     if kind not in ("all", "images", "videos"):
         return jsonify({"status": "error", "error": "kind must be 'all', 'images', or 'videos'"}), 400
 
+    # Refuse to start a second job if one is already running. Without
+    # this guard a double-click in the UI spawns parallel ffmpeg
+    # processes that thrash each other (1100% CPU, none finishing) —
+    # which is exactly what was bricking generation in production.
+    # Only "pending" and "running" count as in-flight; "done" /
+    # "error" / "cancelled" jobs are inert and don't block.
+    with _JOBS_LOCK:
+        in_flight = [
+            j for j in _JOBS.values()
+            if (j.get("state") or "").lower() in ("pending", "running")
+        ]
+    if in_flight:
+        existing = in_flight[0]
+        print(
+            f"[/generate-jobs] REFUSING new job — {existing.get('id')} "
+            f"is still {existing.get('state')} ({existing.get('progress', 0)}"
+            f"/{existing.get('total', 0)})",
+            flush=True,
+        )
+        return jsonify({
+            "status": "error",
+            "error":  "another job is already running — cancel it or wait for it to finish",
+            "running_job_id": existing.get("id"),
+            "progress":       existing.get("progress", 0),
+            "total":          existing.get("total", 0),
+        }), 409
+
     job_id = uuid.uuid4().hex[:12]
     # Top-of-job log so the user can confirm in the Flask terminal exactly
     # which pipeline was kicked off. If you click "Generate All Images" you
