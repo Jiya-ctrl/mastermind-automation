@@ -4612,6 +4612,10 @@ def _materialise_delivery_view():
             latest_by_pair[key] = d
 
     merged = []
+    # Track which (stem, kind) pairs we've already emitted from the
+    # filesystem pass, so the orphan pass below doesn't double-emit a
+    # row that still has its source media on disk.
+    emitted_pairs = set()
     for it in fs_items:
         # For each kind the recipient has on disk, emit its own row.
         kinds_present = []
@@ -4683,6 +4687,49 @@ def _materialise_delivery_view():
                     "stored_media_kind":   dlv.get("media_kind"),
                 })
             merged.append(base)
+            emitted_pairs.add((it["id"], kind))
+
+    # Orphan-delivery pass: include rows where the source media has been
+    # deleted from disk but a delivery record still exists. Without this,
+    # the Delivery page (and its History toggle) goes EMPTY the moment
+    # the operator wipes Generated Media — the queue was driven entirely
+    # off the filesystem, so deleting the files erased every visible
+    # send. Delivery records are the source of truth for "did we send
+    # this?" and should outlive their media files.
+    for (stem, kind), dlv in latest_by_pair.items():
+        if kind == "unknown":
+            continue  # legacy rows are surfaced via the fs pass above
+        if (stem, kind) in emitted_pairs:
+            continue
+        rec = recipient_by_stem.get(stem)
+        orphan = {
+            "id":                stem,
+            "row_id":            f"{stem}::{kind}",
+            "stem":              stem,
+            "name":              (rec.get("name") if rec else None) or stem,
+            "createdAt":         dlv.get("createdAt") or dlv.get("updatedAt"),
+            "media_kind":        kind,
+            "detected_kind":     kind,
+            "detected_filename": None,
+            "media_missing":     True,                  # frontend hint: file gone
+            "image":             None,
+            "video":             None,
+            "status":              dlv["status"],
+            "recipient_id":        dlv.get("recipient_id") or (rec.get("id") if rec else None),
+            "recipient_name":      dlv.get("recipient_name") or (rec.get("name") if rec else None),
+            "recipient_phone":     dlv.get("recipient_phone") or (rec.get("phone") if rec else None),
+            "recipient_address":   dlv.get("recipient_address") or (rec.get("address") if rec else None),
+            "delivery_id":         dlv.get("id"),
+            "attempts":            dlv.get("attempts", 0),
+            "max_attempts":        dlv.get("max_attempts", _MAX_ATTEMPTS),
+            "last_error":          dlv.get("last_error"),
+            "provider":            dlv.get("provider"),
+            "provider_message_id": dlv.get("provider_message_id"),
+            "sentAt":              dlv.get("sentAt"),
+            "deliveredAt":         dlv.get("deliveredAt"),
+            "stored_media_kind":   dlv.get("media_kind"),
+        }
+        merged.append(orphan)
 
     # Stable ordering — newest createdAt first, then kind so image and
     # video rows for the same recipient sit next to each other.
