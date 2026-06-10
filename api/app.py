@@ -1729,11 +1729,16 @@ def generate_videos():
 def _scan_output_dir(dir_path, allowed_exts):
     """Return { stem (without ext): {filename, size, mtime} } for non-empty files.
 
-    Skips `.partial.mp4` scratch files written by video_generator.py
-    while an encode is in flight (or left over from a crashed encode).
-    Without this filter the worker would happily pick up the half-baked
-    file and ship it to Meta — exactly the bug that caused the
-    Subhash_Nagar_Barshi.mp4.partial.mp4 row to surface in the UI.
+    Skips encoder scratch files written by video_generator.py:
+      * <real_stem>.mp4.partial.mp4 — in-flight first-pass encode that
+        only gets renamed to <real_stem>.mp4 once ffprobe validates it.
+      * <real_stem>.mp4.tight.mp4   — size-guard second-pass re-encode
+        that only gets renamed to <real_stem>.mp4 if it succeeds.
+    Without either filter the worker / Generated Media UI would surface
+    the half-baked / intermediate file as if it were a finished
+    personalised render (the case the operator just hit: the .tight.mp4
+    fallback left behind by an interrupted size-guard pass showed up
+    as a third 'video' for the Indore_MP recipient).
     """
     result = {}
     if not os.path.isdir(dir_path):
@@ -1749,10 +1754,12 @@ def _scan_output_dir(dir_path, allowed_exts):
         stem, ext = os.path.splitext(entry)
         if ext.lower() not in allowed_exts:
             continue
-        # Ignore in-flight / leftover encoder scratch files. The
-        # video_generator writes to <real_stem>.mp4.partial.mp4 and
-        # only renames to <real_stem>.mp4 once ffprobe validates it.
-        if stem.endswith(".partial") or ".partial." in stem.lower() or entry.endswith(".partial.mp4"):
+        # Ignore in-flight / leftover encoder scratch files (.partial.mp4
+        # before the atomic rename; .tight.mp4 before the size-guard
+        # rename).
+        _lower_entry = entry.lower()
+        if (stem.endswith(".partial") or ".partial." in stem.lower() or _lower_entry.endswith(".partial.mp4")
+                or stem.endswith(".tight") or ".tight." in stem.lower() or _lower_entry.endswith(".tight.mp4")):
             continue
         try:
             size = os.path.getsize(full)

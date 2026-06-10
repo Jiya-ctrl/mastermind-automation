@@ -735,6 +735,13 @@ if final_size_mb > WHATSAPP_VIDEO_LIMIT_MB:
     fb_result = subprocess.run(fb_cmd)
     if fb_result.returncode != 0:
         print(f"[size-guard] fallback encode failed (exit {fb_result.returncode}); keeping first pass")
+        # Wipe the half-written .tight.mp4 so it doesn't sit on disk
+        # and get picked up as a phantom "extra video" by the scanner.
+        try:
+            if os.path.exists(fallback_path):
+                os.remove(fallback_path)
+        except OSError:
+            pass
     else:
         os.replace(fallback_path, output_path)
         final_size_mb = os.path.getsize(output_path) / (1024 * 1024)
