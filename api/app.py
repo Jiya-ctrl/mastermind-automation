@@ -4845,6 +4845,25 @@ def _materialise_delivery_view(include_history: bool = False):
                     "deliveredAt":         dlv.get("deliveredAt"),
                     "stored_media_kind":   dlv.get("media_kind"),
                 })
+                # Visual status override (queue view only): a
+                # Delivered/Read row whose file on disk is newer than
+                # the prior delivery is presented as "Queued" — the
+                # operator just regenerated and intends to re-send.
+                # The underlying delivery record is unchanged so the
+                # History view still shows the real audit trail; the
+                # enqueue path's fresh-file revive then takes over
+                # when Send Media is clicked.
+                if not include_history:
+                    _st = (dlv.get("status") or "")
+                    if _st in ("Delivered", "Read", "Awaiting Reply"):
+                        file_created = it.get("createdAt") or 0
+                        finished_at  = dlv.get("deliveredAt") or dlv.get("sentAt") or 0
+                        if file_created > finished_at + 1000:
+                            base["status"]            = "Queued"
+                            base["prior_status"]      = _st
+                            base["fresh_after_send"]  = True
+                            base["sentAt"]            = None
+                            base["deliveredAt"]       = None
             merged.append(base)
             emitted_pairs.add((it["id"], kind))
 
