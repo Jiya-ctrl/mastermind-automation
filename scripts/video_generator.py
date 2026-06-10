@@ -1,3 +1,12 @@
+"""Personalised WhatsApp-ready video renderer.
+
+ffmpeg + libass per-recipient overlay onto the uploaded master template.
+Fast path (when conditions allow): stream-copy the parts of the template
+that don't carry overlay, re-encode only the overlay window, concat the
+three segments with -c copy. Safe path single-pass full re-encode is
+used as a fallback. See the comment block above the fast/safe split for
+the exact preconditions."""
+
 import datetime
 import hashlib
 import json
