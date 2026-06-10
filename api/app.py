@@ -3027,6 +3027,35 @@ def _take_next_queued():
             else:
                 target["video_filename"] = det["filename"]
 
+        # Live recipient refresh — read the LATEST phone/name from the
+        # recipients table (which mirrors the Google Sheet) so an
+        # operator-corrected number wins over the snapshot stored on
+        # the delivery row at enqueue time. Without this, fixing a bad
+        # phone in the sheet didn't propagate to the worker and the
+        # next Send Media kept dialling the stale number.
+        try:
+            with _RECIPIENTS_LOCK:
+                rdoc = _load_recipients()
+            for r in rdoc.get("items", []):
+                if _sanitize_stem(r.get("address") or "") == stem:
+                    new_phone = (r.get("phone") or "").strip()
+                    new_name  = (r.get("name")  or "").strip()
+                    old_phone = (target.get("recipient_phone") or "").strip()
+                    if new_phone and new_phone != old_phone:
+                        _delivery_log(
+                            "INFO", "auto-correct phone",
+                            delivery_id=target.get("id"), stem=stem,
+                            was=old_phone, now=new_phone,
+                        )
+                        target["recipient_phone"] = new_phone
+                    if new_name:
+                        target["recipient_name"]  = new_name
+                    target["recipient_id"]        = r.get("id") or target.get("recipient_id")
+                    target["recipient_address"]   = r.get("address") or target.get("recipient_address")
+                    break
+        except Exception as e:
+            print(f"[_take_next_queued] recipient refresh failed: {e}", flush=True)
+
         target["status"]    = "Sending"
         target["attempts"]  = int(target.get("attempts") or 0) + 1
         target["updatedAt"] = _now_ms()
@@ -4878,13 +4907,20 @@ def _materialise_delivery_view(include_history: bool = False):
             if dlv:
                 base.update({
                     "status":              dlv["status"],
-                    # Delivery row's recipient fields override the
-                    # recipient-table snapshot above so any later edits
-                    # to the row (e.g. corrected phone) win.
-                    "recipient_id":        dlv.get("recipient_id") or base.get("recipient_id"),
-                    "recipient_name":      dlv.get("recipient_name") or base.get("recipient_name"),
-                    "recipient_phone":     dlv.get("recipient_phone") or base.get("recipient_phone"),
-                    "recipient_address":   dlv.get("recipient_address") or base.get("recipient_address"),
+                    # Recipient identity: the recipients table (which
+                    # mirrors the live Google Sheet) is the source of
+                    # truth, so its values take priority. Fall back to
+                    # the delivery row's stored snapshot only when the
+                    # current sheet row has been deleted. Earlier the
+                    # priority was inverted "so per-row delivery edits
+                    # would win" — but there's no per-row phone edit
+                    # UI, and the inversion silently froze a stale
+                    # phone (Mahima's old number) into WhatsApp Send
+                    # even after the operator fixed it in the sheet.
+                    "recipient_id":        base.get("recipient_id")      or dlv.get("recipient_id"),
+                    "recipient_name":      base.get("recipient_name")    or dlv.get("recipient_name"),
+                    "recipient_phone":     base.get("recipient_phone")   or dlv.get("recipient_phone"),
+                    "recipient_address":   base.get("recipient_address") or dlv.get("recipient_address"),
                     "delivery_id":         dlv.get("id"),
                     "attempts":            dlv.get("attempts", 0),
                     "max_attempts":        dlv.get("max_attempts", _MAX_ATTEMPTS),
