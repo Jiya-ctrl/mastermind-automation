@@ -399,20 +399,42 @@ export default function Delivery() {
     }
   }
 
-  // Per-row delete — removes a single delivery from the queue. Soft
-  // delete by default, so the row stays in History; the backend used
-  // to skip rows in 'Sending' state but stopped doing so once it
-  // became clear that stuck-on-Sending was the case the operator
-  // needed to clear most often.
-  async function deleteOne(deliveryId, displayName) {
-    if (!deliveryId) return
-    const label = displayName || 'this row'
+  // Per-row delete — removes a single row from the WhatsApp queue.
+  //
+  // Two row flavours:
+  //   * With a delivery record (delivery_id present) — soft-delete the
+  //     delivery so the row vanishes from the queue but stays in
+  //     History. Backend used to refuse 'Sending' rows; that was
+  //     dropped because stuck-on-Sending (no webhook back) was the
+  //     case the operator needed to clear most often.
+  //   * Fs-only (no delivery_id, e.g. just generated from the
+  //     Dashboard modal and never enqueued) — drop the underlying file
+  //     via /list-generated/delete. There's nothing else to remove,
+  //     and leaving the file would make the row reappear on the next
+  //     poll.
+  async function deleteOne(row) {
+    if (!row) return
+    const label = row.recipient_name || row.name || 'this row'
     if (!window.confirm(`Remove ${label} from the WhatsApp queue?`)) return
     setError(null)
     try {
-      const data = await postJson('/deliveries/delete', { ids: [deliveryId] })
-      const removed = (data.removed || []).length
-      if (removed > 0) showToast(`Removed ${removed} delivery`, 'success')
+      if (row.delivery_id) {
+        const data = await postJson('/deliveries/delete', { ids: [row.delivery_id] })
+        const removed = (data.removed || []).length
+        if (removed > 0) showToast(`Removed ${removed} delivery`, 'success')
+      } else {
+        const kind = rowMediaKind(row)
+        if (!kind || !row.stem) {
+          showToast('Cannot identify the file for this row', 'error')
+          return
+        }
+        const data = await postJson('/list-generated/delete', {
+          items: [{ stem: row.stem, kind }],
+        })
+        const deleted = (data.deleted || []).length
+        if (deleted > 0) showToast(`Removed ${deleted} file`, 'success')
+        else showToast('Nothing was removed', 'info')
+      }
       await fetchList()
     } catch (e) {
       setError(`Delete failed: ${e.message || e}`)
@@ -1075,15 +1097,15 @@ export default function Delivery() {
                             title="Debug: synthesise an inbound YES reply to advance this row to stage 2"
                           >🧪 Simulate YES Reply</button>
                         )}
-                        {r.delivery_id && (
-                          <button
-                            type="button"
-                            className="btn btn-ghost dlv-delete-btn"
-                            onClick={() => deleteOne(r.delivery_id, r.recipient_name || r.name)}
-                            title="Remove this delivery from the queue"
-                            aria-label="Delete delivery"
-                          >🗑</button>
-                        )}
+                        <button
+                          type="button"
+                          className="btn btn-ghost dlv-delete-btn"
+                          onClick={() => deleteOne(r)}
+                          title={r.delivery_id
+                            ? 'Remove this delivery from the queue'
+                            : 'Delete the generated file for this row'}
+                          aria-label="Delete row"
+                        >🗑</button>
                       </td>
                     </tr>
                   )
