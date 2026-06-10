@@ -4823,19 +4823,22 @@ def _materialise_delivery_view(include_history: bool = False):
                 base["recipient_name"]    = rec.get("name")
                 base["recipient_phone"]   = rec.get("phone")
                 base["recipient_address"] = rec.get("address")
-            # Active-queue filter (fs-backed pass): show every fs-
-            # backed row EXCEPT ones the operator explicitly removed
-            # via per-row delete / bulk delete / Clear All (the
-            # `deleted` flag). Delivered / Read / Awaiting Reply rows
-            # stay visible so the operator's "Generated Media has N
-            # videos → WP Send has N rows" mental model holds; the
-            # status override below visually flips terminal-success
-            # rows back to Queued when their file is regenerated.
-            # Without this skip, "Delete 2 selected" appeared to
-            # silently no-op because soft-deleted rows kept showing
-            # up. Orphan pass below has its own hide for these too.
+            # Active-queue filter (fs-backed pass): hide rows whose
+            # delivery record the operator soft-deleted, UNLESS the
+            # file on disk is newer than the delete event — in which
+            # case the operator just regenerated the personalised
+            # media after a Clear All, and the row should resurface.
+            # Without the fresh-file escape, "Clear All → regenerate"
+            # silently hid every regenerated row from the queue
+            # because the underlying delivery record stayed
+            # soft-deleted. The orphan pass below has its own hide
+            # for delete-but-no-file rows so they stay in History
+            # only.
             if dlv and not include_history and dlv.get("deleted"):
-                continue
+                file_created = it.get("createdAt") or 0
+                deleted_at   = dlv.get("deletedAt") or 0
+                if file_created <= deleted_at + 1000:
+                    continue
             if dlv:
                 base.update({
                     "status":              dlv["status"],
