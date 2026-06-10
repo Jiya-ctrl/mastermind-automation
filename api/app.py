@@ -2869,16 +2869,18 @@ def _enqueue_recipients(recipient_subset, media_kind=None):
         }
 
         # Exclusive-kind enforcement: when the operator picks a specific
-        # kind ("Send all images" / "Send all videos"), any STILL-PENDING
-        # row for the OPPOSITE kind of the same recipient gets soft-
-        # deleted so the worker doesn't ship both. Without this the
-        # screenshot case happens: Mahimaaaa has image AND video both
-        # Queued from a prior auto-send click, the operator clicks Send
-        # Images expecting "images only", but the worker still picks up
-        # the video on its next tick and ships it anyway. Sending rows
-        # are left alone — Meta has already accepted them, cancelling
-        # at this stage is a no-op. Delivered / Read / Failed stay
-        # untouched too; this is purely about clearing the QUEUED tail.
+        # kind ("Send all images" / "Send all videos"), every opposite-
+        # kind row for the same recipient that hasn't already finished
+        # at Meta gets soft-deleted. That covers Queued (about to be
+        # picked up) AND Sending (worker just submitted to Meta but
+        # webhook hasn't come back). Sending rows: yes, Meta may still
+        # deliver — there's no recall API once the POST landed — but
+        # the operator's UI intent is "I don't want videos right now",
+        # and leaving a Sending video row visible after they pressed
+        # Send Images looks broken. Delivered / Read / Failed /
+        # Awaiting Reply rows stay untouched because they're already
+        # terminal from the operator's perspective.
+        _CANCELLABLE_STATES = ("Queued", "Sending", "Pending Callback")
         if media_kind in ("image", "video"):
             other_kind = "video" if media_kind == "image" else "image"
             recipient_ids = {r.get("id") for r in recipient_subset}
@@ -2890,14 +2892,16 @@ def _enqueue_recipients(recipient_subset, media_kind=None):
                     continue
                 if d.get("deleted"):
                     continue
-                if (d.get("status") or "") != "Queued":
+                _dst = (d.get("status") or "")
+                if _dst not in _CANCELLABLE_STATES:
                     continue
                 d["deleted"]   = True
                 d["deletedAt"] = now_ms
                 d["updatedAt"] = now_ms
                 cancelled_other_kind.append(d.get("id"))
                 _delivery_log(
-                    "INFO", f"cancelled pending {other_kind} (operator picked {media_kind} only)",
+                    "INFO",
+                    f"cancelled {other_kind} (was {_dst}) — operator picked {media_kind} only",
                     delivery_id=d.get("id"), stem=d.get("stem"),
                     phone=d.get("recipient_phone"), name=d.get("recipient_name"),
                 )
