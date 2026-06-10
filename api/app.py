@@ -2867,11 +2867,32 @@ def _enqueue_recipients(recipient_subset, media_kind=None):
             key = (r.get("id"), stem, effective_kind)
             if key in existing:
                 prev = existing[key]
-                # Revive: a soft-deleted prior row should be re-queued
-                # rather than reported as "already exists". Without this
-                # the operator's "Send Media" click after a previous
-                # Clear All would silently no-op for every recipient.
-                if prev.get("deleted"):
+                prev_status = (prev.get("status") or "")
+                # Revive conditions:
+                #   1. Soft-deleted by the operator — Clear All / per-row
+                #      delete put the row aside; re-enqueueing means they
+                #      want it back.
+                #   2. Already-Delivered / Read but the file on disk is
+                #      NEWER than the prior delivery — operator just
+                #      regenerated the personalised media and wants the
+                #      new version sent. Without this branch, Send Media
+                #      silently no-ops on every regenerate-after-deliver
+                #      cycle.
+                file_meta = v if effective_kind == "video" else i
+                file_mtime_ms = 0
+                if file_meta:
+                    raw_mtime = file_meta.get("mtime", 0)
+                    # _scan_output_dir stores mtime as seconds; the older
+                    # alternate path stores ms. Normalise to ms.
+                    file_mtime_ms = int(raw_mtime if raw_mtime > 10**11
+                                        else raw_mtime * 1000)
+                finished_at = prev.get("deliveredAt") or prev.get("sentAt") or 0
+                fresh_after_send = (
+                    prev_status in ("Delivered", "Read")
+                    and file_mtime_ms > finished_at + 1000
+                )
+                was_soft_deleted = bool(prev.get("deleted"))
+                if was_soft_deleted or fresh_after_send:
                     now_ms = _now_ms()
                     prev["deleted"]      = False
                     prev["deletedAt"]    = None
@@ -2882,8 +2903,10 @@ def _enqueue_recipients(recipient_subset, media_kind=None):
                     prev["deliveredAt"]  = None
                     prev["updatedAt"]    = now_ms
                     enqueued.append(prev)
+                    reason = ("fresh file after prior delivery" if fresh_after_send
+                              else "was soft-deleted")
                     _delivery_log(
-                        "INFO", f"re-enqueued {effective_kind} (was soft-deleted)",
+                        "INFO", f"re-enqueued {effective_kind} ({reason})",
                         delivery_id=prev["id"], stem=stem, kind=effective_kind,
                         phone=prev.get("recipient_phone"), name=prev.get("recipient_name"),
                     )
@@ -2892,7 +2915,7 @@ def _enqueue_recipients(recipient_subset, media_kind=None):
                     "recipient_id": r.get("id"),
                     "stem":         stem,
                     "kind":         effective_kind,
-                    "status":       prev.get("status"),
+                    "status":       prev_status,
                 })
                 continue
 
@@ -4789,14 +4812,22 @@ def _materialise_delivery_view(include_history: bool = False):
                 base["recipient_phone"]   = rec.get("phone")
                 base["recipient_address"] = rec.get("address")
             # Active-queue filter: when not in history mode, hide rows
-            # that are already terminal-success (Delivered) or that the
-            # operator soft-deleted from the queue. Failed rows stay so
-            # they can be retried in place.
+            # the operator soft-deleted, and hide terminal-success
+            # rows (Delivered / Read) UNLESS the file on disk is newer
+            # than the prior delivery — in that case the operator just
+            # regenerated and the row should resurface as ready to
+            # re-send. Failed rows stay so they can be retried in place.
             if dlv and not include_history:
                 if dlv.get("deleted"):
                     continue
-                if (dlv.get("status") or "") == "Delivered":
-                    continue
+                _st = (dlv.get("status") or "")
+                if _st in ("Delivered", "Read"):
+                    file_created  = it.get("createdAt") or 0
+                    finished_at   = dlv.get("deliveredAt") or dlv.get("sentAt") or 0
+                    # 1-second grace for clock skew between worker write
+                    # and filesystem mtime stamp.
+                    if file_created <= finished_at + 1000:
+                        continue
             if dlv:
                 base.update({
                     "status":              dlv["status"],
