@@ -3604,11 +3604,14 @@ def deliveries_delete(dlv_id):
         if hard:
             doc["items"] = [d for d in doc["items"] if d.get("id") != dlv_id]
         else:
-            if (target.get("status") or "") == "Sending":
-                return jsonify({
-                    "status": "error",
-                    "error":  "cannot delete a row that is currently Sending",
-                }), 409
+            # Note: we used to refuse delete when status=Sending out of
+            # paranoia about a webhook race, but in practice "Sending"
+            # rows stay stuck whenever the webhook never arrives (Meta
+            # is silent for the recipient, recipient offline for hours,
+            # etc.) and the operator had no way to clear them. Soft-
+            # delete keeps the row in deliveries.json with deleted=True
+            # so a late webhook can still update it — there's no real
+            # race to protect against.
             target["deleted"]   = True
             target["deletedAt"] = now_ms
             target["updatedAt"] = now_ms
@@ -3649,8 +3652,10 @@ def deliveries_clear():
         for d in doc.get("items", []):
             if d.get("deleted"):
                 continue
-            if (d.get("status") or "") == "Sending":
-                continue
+            # Sending rows are now soft-cleared like everything else —
+            # the operator was getting stuck on rows whose delivery
+            # webhook never arrived. Soft-delete keeps the row around
+            # so a late webhook can still update it harmlessly.
             d["deleted"]   = True
             d["deletedAt"] = now_ms
             d["updatedAt"] = now_ms
@@ -3664,20 +3669,24 @@ def deliveries_clear():
 def deliveries_delete_bulk():
     """Soft-delete delivery rows by id. Body: {ids: [<id>, ...], hard?: bool}.
     Used by the Delivery page's per-row trash icon + bulk-select toolbar.
-    Rows that are currently Sending are skipped (deleting under the worker
-    is unsafe); the response reports which ids actually got removed.
 
     Default (hard != true) is a SOFT delete — marks deleted=true so the
     History view still surfaces the row. Pass hard=true to physically
     drop the rows; the History page uses this when wiping its own
-    records."""
+    records.
+
+    Sending rows are NOT skipped: when the WhatsApp delivery webhook
+    never comes back (recipient offline, Meta silent), rows would sit
+    in 'Sending' forever and the operator had no way to clear them.
+    Soft-delete keeps the row in deliveries.json so a late-arriving
+    webhook can still update it harmlessly."""
     payload  = request.get_json(silent=True) or {}
     raw_ids  = payload.get("ids") or []
     hard     = bool(payload.get("hard"))
     if not isinstance(raw_ids, list) or not raw_ids:
         return jsonify({"status": "error", "error": "ids must be a non-empty array"}), 400
     targets = {str(x) for x in raw_ids if x}
-    removed, skipped = [], []
+    removed = []
     now_ms = int(time.time() * 1000)
     with _DELIVERIES_LOCK:
         doc = _load_deliveries()
@@ -3685,10 +3694,7 @@ def deliveries_delete_bulk():
         for d in doc.get("items", []):
             did = str(d.get("id") or "")
             if did in targets:
-                if (d.get("status") or "") == "Sending":
-                    skipped.append({"id": did, "reason": "in-flight"})
-                    kept.append(d)
-                elif hard:
+                if hard:
                     removed.append(did)
                     # not appended to kept => physically dropped
                 else:
@@ -3705,13 +3711,12 @@ def deliveries_delete_bulk():
         "INFO",
         "deliveries deleted",
         removed=len(removed),
-        skipped=len(skipped),
         mode="hard" if hard else "soft",
     )
     return jsonify({
         "status":  "success",
         "removed": removed,
-        "skipped": skipped,
+        "skipped": [],
         "mode":    "hard" if hard else "soft",
     })
 

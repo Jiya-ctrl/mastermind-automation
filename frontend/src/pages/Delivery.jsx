@@ -399,9 +399,11 @@ export default function Delivery() {
     }
   }
 
-  // Per-row delete — removes a single delivery from the queue. The row
-  // disappears immediately; the backend skips rows that are mid-send
-  // (status='Sending') and reports them in `skipped`.
+  // Per-row delete — removes a single delivery from the queue. Soft
+  // delete by default, so the row stays in History; the backend used
+  // to skip rows in 'Sending' state but stopped doing so once it
+  // became clear that stuck-on-Sending was the case the operator
+  // needed to clear most often.
   async function deleteOne(deliveryId, displayName) {
     if (!deliveryId) return
     const label = displayName || 'this row'
@@ -410,9 +412,7 @@ export default function Delivery() {
     try {
       const data = await postJson('/deliveries/delete', { ids: [deliveryId] })
       const removed = (data.removed || []).length
-      const skipped = (data.skipped || []).length
       if (removed > 0) showToast(`Removed ${removed} delivery`, 'success')
-      if (skipped > 0) showToast(`${skipped} row is mid-send — try again in a moment`, 'info')
       await fetchList()
     } catch (e) {
       setError(`Delete failed: ${e.message || e}`)
@@ -431,9 +431,7 @@ export default function Delivery() {
     try {
       const data = await postJson('/deliveries/delete', { ids: [...selectedIds] })
       const removed = (data.removed || []).length
-      const skipped = (data.skipped || []).length
       if (removed > 0) showToast(`Removed ${removed} ${removed === 1 ? 'row' : 'rows'}`, 'success')
-      if (skipped > 0) showToast(`${skipped} ${skipped === 1 ? 'row is' : 'rows are'} mid-send — try again`, 'info')
       setSelectedIds(new Set())
       await fetchList()
     } catch (e) {
