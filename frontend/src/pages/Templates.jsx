@@ -124,6 +124,12 @@ export default function Templates() {
     })
     setSavedAt(null)
     setSavedInfo(null)
+    // Kick off the upload immediately in the background so the operator
+    // doesn't have to click a separate Save button and then wait. By the
+    // time they hit Proceed → the file is usually already on disk; if
+    // it isn't, the Proceed handler waits the few remaining seconds
+    // instead of a fresh 11 MB upload.
+    void saveTemplate({ background: true, fileOverride: f, modeOverride: mode })
   }
 
   function onDragOver(e) {
@@ -153,8 +159,20 @@ export default function Templates() {
     setError(null)
   }
 
-  async function saveTemplate() {
-    if (!file || saving) return
+  // Token used to ignore stale uploads: every time we start a save we
+  // bump the token; only the upload whose token still matches the
+  // current one is allowed to mutate state. Picking a new file mid-
+  // upload therefore cleanly discards the prior upload's result.
+  const saveTokenRef = useRef(0)
+  // Returns a promise that resolves once the save finishes, so the
+  // Proceed button can `await` an in-flight upload that started in
+  // background when the file was first picked.
+  const inFlightSaveRef = useRef(null)
+
+  async function saveTemplate(opts = {}) {
+    const f = opts.fileOverride || file
+    const m = opts.modeOverride || mode
+    if (!f) return
     if (!BACKEND_CONFIGURED) {
       // No backend wired yet — keep the local preview, mark it "saved"
       // so the Proceed → CTA appears, and let the operator continue
@@ -166,37 +184,65 @@ export default function Templates() {
       })
       return
     }
+    // Bump the token; capture our own value so we can detect being
+    // superseded by a newer file pick before our network call returns.
+    const myToken = ++saveTokenRef.current
     setError(null)
     setSaving(true)
-    try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('kind', mode)
-      const res = await fetch(`${API_BASE}/upload-template`, {
-        method: 'POST',
-        body: form,
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok || data.status !== 'success') {
-        throw new Error(data.error || `upload failed (HTTP ${res.status})`)
+    const run = (async () => {
+      try {
+        const form = new FormData()
+        form.append('file', f)
+        form.append('kind', m)
+        const res = await fetch(`${API_BASE}/upload-template`, {
+          method: 'POST',
+          body: form,
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || data.status !== 'success') {
+          throw new Error(data.error || `upload failed (HTTP ${res.status})`)
+        }
+        // Stale-upload guard: a newer file pick has started; drop our result.
+        if (saveTokenRef.current !== myToken) return false
+        setSavedInfo({ path: data.path, bytes: data.bytes, kind: data.kind })
+        setSavedAt(new Date())
+        // Re-fetch via /current-template so we get the SIGNED url the
+        // gallery preview needs. Reconstructing the URL client-side was
+        // a tempting micro-optimisation but it produced an unsigned path
+        // that the /files/templates gate rejected, leaving the preview
+        // broken after save.
+        const fresh = await fetchCurrent(m)
+        if (saveTokenRef.current === myToken && fresh) {
+          setRemote((prev) => ({ ...prev, [m]: fresh }))
+        }
+        return true
+      } catch (e) {
+        if (saveTokenRef.current !== myToken) return false
+        const msg = (e && e.message) ? e.message : String(e)
+        setError(`Save failed: ${msg}. Is the API running on ${API_BASE}?`)
+        return false
+      } finally {
+        if (saveTokenRef.current === myToken) setSaving(false)
       }
-      setSavedInfo({ path: data.path, bytes: data.bytes, kind: data.kind })
-      setSavedAt(new Date())
-      // Re-fetch via /current-template so we get the SIGNED url the
-      // gallery preview needs. Reconstructing the URL client-side was
-      // a tempting micro-optimisation but it produced an unsigned path
-      // that the /files/templates gate rejected, leaving the preview
-      // broken after save.
-      const fresh = await fetchCurrent(mode)
-      if (fresh) {
-        setRemote((prev) => ({ ...prev, [mode]: fresh }))
-      }
-    } catch (e) {
-      const msg = (e && e.message) ? e.message : String(e)
-      setError(`Save failed: ${msg}. Is the API running on ${API_BASE}?`)
-    } finally {
-      setSaving(false)
+    })()
+    inFlightSaveRef.current = run
+    return run
+  }
+
+  // Proceed handler — never blocks. If the background save is still
+  // in flight we navigate immediately and let it finish on its own;
+  // the operator can move on to picking recipients without staring
+  // at a "Saving…" button. If no save has started yet (e.g. the file
+  // was loaded from a saved-remote slot, not a fresh pick) we kick
+  // one off as we go. Save failures surface as the on-page error
+  // banner — they don't trap navigation.
+  function proceedToSheets() {
+    if (!savedAt && !saving && !inFlightSaveRef.current) {
+      // Fresh-page case: no in-flight save and nothing saved yet.
+      // Kick one off so the file actually lands on the server.
+      void saveTemplate()
     }
+    navigate('/sheets')
   }
 
   // ---------- derived render state ----------
@@ -312,25 +358,19 @@ export default function Templates() {
                 >
                   Choose a different file
                 </button>
-                {savedAt ? (
-                  <button
-                    type="button"
-                    className="btn btn-brand tmpl-proceed-btn"
-                    onClick={() => navigate('/sheets')}
-                    title="Continue to the recipient list"
-                  >
-                    Proceed <span className="tmpl-proceed-arrow" aria-hidden="true">→</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn-brand"
-                    onClick={saveTemplate}
-                    disabled={saving}
-                  >
-                    {saving ? 'Saving…' : 'Save Template'}
-                  </button>
-                )}
+                {/* Single action — no separate "Save Template" step.
+                    Upload kicks off as soon as a file is picked (see
+                    handleFiles), and Proceed never blocks on it: the
+                    operator moves on, the upload finishes in the
+                    background. */}
+                <button
+                  type="button"
+                  className="btn btn-brand tmpl-proceed-btn"
+                  onClick={proceedToSheets}
+                  title="Continue to the recipient list"
+                >
+                  Proceed <span className="tmpl-proceed-arrow" aria-hidden="true">→</span>
+                </button>
               </div>
             </div>
           </div>
