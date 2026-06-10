@@ -342,17 +342,24 @@ export default function Delivery() {
       const n = typeof data.enqueued === 'number'
         ? data.enqueued
         : (Array.isArray(data.items) ? data.items.length : 0)
-      if (n === 0) {
+      const cancelled = Array.isArray(data.cancelled_other_kind)
+        ? data.cancelled_other_kind.length
+        : 0
+      if (n === 0 && cancelled === 0) {
         showToast(
           `Nothing new to send — every eligible ${kind || 'render'} already has a delivery record.`,
           'info',
         )
       } else {
-        const kindLabel = kind === 'image' ? 'image' : kind === 'video' ? 'video' : 'delivery'
-        showToast(
-          `Queued ${n} ${kindLabel}${n === 1 ? '' : 's'}${label ? ` (${label})` : ''}`,
-          'success',
-        )
+        const kindLabel  = kind === 'image' ? 'image' : kind === 'video' ? 'video' : 'delivery'
+        const otherLabel = kind === 'image' ? 'video' : 'image'
+        const parts = []
+        if (n > 0) parts.push(`Queued ${n} ${kindLabel}${n === 1 ? '' : 's'}`)
+        if (cancelled > 0) {
+          parts.push(`cancelled ${cancelled} pending ${otherLabel}${cancelled === 1 ? '' : 's'}`)
+        }
+        const tail = label ? ` (${label})` : ''
+        showToast(`${parts.join(' · ')}${tail}`, 'success')
       }
       await fetchList()
     } catch (e) {

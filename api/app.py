@@ -2856,6 +2856,7 @@ def _enqueue_recipients(recipient_subset, media_kind=None):
     images = _scan_output_dir(OUTPUT_IMAGES, _IMAGE_OUT_EXTS)
 
     enqueued, skipped_missing, skipped_existing = [], [], []
+    cancelled_other_kind = []
 
     with _DELIVERIES_LOCK:
         doc = _load_deliveries()
@@ -2866,6 +2867,40 @@ def _enqueue_recipients(recipient_subset, media_kind=None):
             (d.get("recipient_id"), d.get("stem"), d.get("media_kind")): d
             for d in doc["items"]
         }
+
+        # Exclusive-kind enforcement: when the operator picks a specific
+        # kind ("Send all images" / "Send all videos"), any STILL-PENDING
+        # row for the OPPOSITE kind of the same recipient gets soft-
+        # deleted so the worker doesn't ship both. Without this the
+        # screenshot case happens: Mahimaaaa has image AND video both
+        # Queued from a prior auto-send click, the operator clicks Send
+        # Images expecting "images only", but the worker still picks up
+        # the video on its next tick and ships it anyway. Sending rows
+        # are left alone — Meta has already accepted them, cancelling
+        # at this stage is a no-op. Delivered / Read / Failed stay
+        # untouched too; this is purely about clearing the QUEUED tail.
+        if media_kind in ("image", "video"):
+            other_kind = "video" if media_kind == "image" else "image"
+            recipient_ids = {r.get("id") for r in recipient_subset}
+            now_ms = _now_ms()
+            for d in doc["items"]:
+                if d.get("recipient_id") not in recipient_ids:
+                    continue
+                if d.get("media_kind") != other_kind:
+                    continue
+                if d.get("deleted"):
+                    continue
+                if (d.get("status") or "") != "Queued":
+                    continue
+                d["deleted"]   = True
+                d["deletedAt"] = now_ms
+                d["updatedAt"] = now_ms
+                cancelled_other_kind.append(d.get("id"))
+                _delivery_log(
+                    "INFO", f"cancelled pending {other_kind} (operator picked {media_kind} only)",
+                    delivery_id=d.get("id"), stem=d.get("stem"),
+                    phone=d.get("recipient_phone"), name=d.get("recipient_name"),
+                )
 
         for r in recipient_subset:
             stem = _sanitize_stem(r.get("address", ""))
@@ -2974,14 +3009,15 @@ def _enqueue_recipients(recipient_subset, media_kind=None):
                 phone=new["recipient_phone"], name=new["recipient_name"],
             )
 
-        if enqueued:
+        if enqueued or cancelled_other_kind:
             _save_deliveries(doc)
 
     return {
-        "enqueued":         len(enqueued),
-        "items":            enqueued,
-        "skipped_missing":  skipped_missing,
-        "skipped_existing": skipped_existing,
+        "enqueued":             len(enqueued),
+        "items":                enqueued,
+        "skipped_missing":      skipped_missing,
+        "skipped_existing":     skipped_existing,
+        "cancelled_other_kind": cancelled_other_kind,
     }
 
 
