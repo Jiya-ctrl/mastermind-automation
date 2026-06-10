@@ -402,6 +402,40 @@ def generate():
         video = _run_video_pipeline(address, phone, name)
 
     overall_ok = (image["ok"] if image else True) and (video["ok"] if video else True)
+
+    # Persist the recipient on success so the WhatsApp Send page can
+    # cross-join the generated file back to a name/phone. Without this
+    # step the Dashboard's one-off "Generate Personalised Media" modal
+    # produced media that surfaced in WP Send with the raw stem and a
+    # blank phone column — operator reported "number nahi fetched ho
+    # raha". Dedup by sanitised-stem so re-generating the same address
+    # doesn't append duplicate rows; phone/name are refreshed in place
+    # so the latest values from the modal win.
+    if overall_ok:
+        try:
+            stem_new = _sanitize_stem(address)
+            with _RECIPIENTS_LOCK:
+                rdoc = _load_recipients()
+                existing = None
+                for r in rdoc["items"]:
+                    if _sanitize_stem(r.get("address") or "") == stem_new:
+                        existing = r
+                        break
+                if existing is None:
+                    rdoc["items"].append({
+                        "id":      _new_id(),
+                        "name":    name,
+                        "phone":   phone,
+                        "address": address,
+                    })
+                else:
+                    if phone: existing["phone"] = phone
+                    if name:  existing["name"]  = name
+                    existing["address"] = address
+                _save_recipients(rdoc)
+        except Exception as e:
+            print(f"[/generate] failed to persist recipient: {e}", flush=True)
+
     body = {
         "status": "success" if overall_ok else "error",
         "kind":   kind,
