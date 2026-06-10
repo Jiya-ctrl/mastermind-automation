@@ -546,8 +546,30 @@ def _run(cmd_list: list[str], label: str) -> int:
 # step exits non-zero — segment-split is best-effort, never required.
 # =============================================================================
 
-_use_fast_path = (start >= 5.0) and (_audio_codec == "aac")
+# Segment+concat preserves the source bitrate on the pre/post halves
+# (they're byte-level stream-copies). If the source itself is already
+# over the WhatsApp video budget, the concat output will inherit that
+# oversize and Meta will reject the upload with "Media upload error"
+# (exactly the case the operator just hit — a 27 MB Shreeji_Vally
+# render for Kavyansh). The size-guard fallback re-encode SHOULD
+# rescue it, but on heavy concat inputs the re-encode sometimes
+# fails outright and we ship the bad file anyway. Cheaper to skip
+# the fast path for those sources up front.
+#
+# Threshold: source size projected to comfortably fit under the
+# WhatsApp limit even with a small headroom. If the source already
+# exceeds that, force single-pass full re-encode (which targets a
+# CRF-derived budget and reliably ends up under the cap).
+_source_size_mb = os.path.getsize(template_path) / (1024 * 1024)
+_source_safe    = _source_size_mb < (WHATSAPP_VIDEO_LIMIT_MB * 0.85)
+
+_use_fast_path = (start >= 5.0) and (_audio_codec == "aac") and _source_safe
 _fast_path_ok  = False
+
+if not _source_safe:
+    print(f"Encode strategy: source {_source_size_mb:.1f} MB >= "
+          f"{WHATSAPP_VIDEO_LIMIT_MB * 0.85:.1f} MB safety threshold "
+          f"-> skipping segment+concat (single-pass will re-encode under budget)")
 
 if _use_fast_path:
     print(f"Encode strategy: SEGMENT+CONCAT  pre=0..{start:.2f}s  "
@@ -665,6 +687,21 @@ if not _fast_path_ok:
     with open(ass_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(ass_doc)
 
+    # When the source itself is over WhatsApp budget, CRF-only encoding
+    # can still drift past the cap. Add a maxrate-derived bitrate cap
+    # that mathematically can't overshoot — 85% of the limit divided by
+    # duration. CRF still drives quality on simpler frames, but no
+    # single frame can balloon the file past the budget.
+    _budget_args = []
+    if not _source_safe:
+        _budget_kbps = max(400, int((WHATSAPP_VIDEO_LIMIT_MB * 0.85 * 8 * 1024) / duration) - AUDIO_BITRATE_KBPS)
+        _budget_args = [
+            "-maxrate", f"{_budget_kbps}k",
+            "-bufsize", f"{_budget_kbps * 2}k",
+        ]
+        print(f"[single-pass] applying maxrate {_budget_kbps}k "
+              f"(source {_source_size_mb:.1f} MB > safety threshold)")
+
     cmd = [
         ffmpeg_path, "-y",
         "-threads", "0",
@@ -673,6 +710,7 @@ if not _fast_path_ok:
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-crf", "28",
+        *_budget_args,
         "-pix_fmt", "yuv420p",
         *_AUDIO_ARGS,
         "-movflags", "+faststart",
@@ -746,6 +784,20 @@ if final_size_mb > WHATSAPP_VIDEO_LIMIT_MB:
         os.replace(fallback_path, output_path)
         final_size_mb = os.path.getsize(output_path) / (1024 * 1024)
         print(f"[size-guard] fallback succeeded -> {final_size_mb:.1f} MB")
+
+# Hard cap. If everything above somehow still left a file over the
+# WhatsApp limit, refuse to publish — the worker will mark the row
+# Failed with a clear "file too large" reason instead of silently
+# shipping a 27 MB render that Meta rejects with "Media upload
+# error" (the exact case that triggered this check on the Kavyansh
+# row).
+if final_size_mb > WHATSAPP_VIDEO_LIMIT_MB:
+    print(f"[size-guard] FINAL CHECK FAILED — {final_size_mb:.1f} MB "
+          f"still over {WHATSAPP_VIDEO_LIMIT_MB} MB cap. Deleting output "
+          f"so the delivery worker doesn't ship a file Meta will reject.")
+    try: os.remove(output_path)
+    except OSError: pass
+    sys.exit(3)
 
 print("=" * 60)
 print("OUTPUT written to    :", abs_output)
