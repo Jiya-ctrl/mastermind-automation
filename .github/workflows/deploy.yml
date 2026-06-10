@@ -36,7 +36,10 @@ jobs:
   deploy:
     name: Pull + rebuild on Hostinger
     runs-on: ubuntu-latest
-    timeout-minutes: 22
+    # 22 min was tight with the old 45s + 120s backoffs; the new
+    # 5 min + 10 min waits plus 3 × ~3 min SSH attempts need ~30 min
+    # of headroom.
+    timeout-minutes: 35
     steps:
       # ---------- Attempt 1 ---------------------------------------------
       - name: Deploy attempt 1 of 3
@@ -83,11 +86,11 @@ jobs:
             echo "==> Deploy complete (attempt 1)."
 
       # ---------- Attempt 2 (only if attempt 1 failed) ------------------
-      - name: Wait 45s before retry
+      - name: Wait 5 min before retry
         if: steps.try1.outcome == 'failure'
         run: |
-          echo "Attempt 1 failed (likely Hostinger SSH transient timeout or fail2ban block). Backing off 45s before retry."
-          sleep 45
+          echo "Attempt 1 failed. Backing off 5 min — Hostinger's default fail2ban window is 10 min, so a single short retry just hits the same block. Five minutes lets it half-clear before attempt 2, and the longer attempt-3 backoff below handles the rest."
+          sleep 300
 
       - name: Deploy attempt 2 of 3
         id: try2
@@ -122,11 +125,11 @@ jobs:
             echo "==> Deploy complete (attempt 2)."
 
       # ---------- Attempt 3 (final — failure here fails the workflow) ---
-      - name: Wait 120s before final retry
+      - name: Wait 10 min before final retry
         if: steps.try1.outcome == 'failure' && steps.try2.outcome == 'failure'
         run: |
-          echo "Attempt 2 also failed. Final 120s backoff (covers most fail2ban windows) before last try."
-          sleep 120
+          echo "Attempt 2 also failed. Final 10 min backoff — full fail2ban window plus a safety margin — before the last try."
+          sleep 600
 
       - name: Deploy attempt 3 of 3
         if: steps.try1.outcome == 'failure' && steps.try2.outcome == 'failure'
