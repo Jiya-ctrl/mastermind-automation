@@ -4811,23 +4811,22 @@ def _materialise_delivery_view(include_history: bool = False):
                 base["recipient_name"]    = rec.get("name")
                 base["recipient_phone"]   = rec.get("phone")
                 base["recipient_address"] = rec.get("address")
-            # Active-queue filter: when not in history mode, hide rows
-            # the operator soft-deleted, and hide terminal-success
-            # rows (Delivered / Read) UNLESS the file on disk is newer
-            # than the prior delivery — in that case the operator just
-            # regenerated and the row should resurface as ready to
-            # re-send. Failed rows stay so they can be retried in place.
+            # Active-queue filter (fs-backed pass): only hide soft-
+            # deleted rows. Delivered / Read rows stay visible whenever
+            # the file is still on disk — the operator's mental model
+            # is "Generated Media has 4 videos → WP Send shows 4
+            # rows", and any narrower filter (e.g. hide-Delivered) led
+            # to "I just generated this, why is it missing?" complaints
+            # because the fresh-file mtime vs. deliveredAt comparison
+            # had too many edge cases (same-second regenerate, clock
+            # skew, sub-second granularity). The row's status pill
+            # still tells the operator what state it's in; the orphan
+            # pass below (no file on disk) keeps the Delivered/Read
+            # hide so old delivered-but-deleted rows don't clutter the
+            # active queue.
             if dlv and not include_history:
                 if dlv.get("deleted"):
                     continue
-                _st = (dlv.get("status") or "")
-                if _st in ("Delivered", "Read"):
-                    file_created  = it.get("createdAt") or 0
-                    finished_at   = dlv.get("deliveredAt") or dlv.get("sentAt") or 0
-                    # 1-second grace for clock skew between worker write
-                    # and filesystem mtime stamp.
-                    if file_created <= finished_at + 1000:
-                        continue
             if dlv:
                 base.update({
                     "status":              dlv["status"],
