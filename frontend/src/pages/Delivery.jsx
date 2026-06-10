@@ -743,7 +743,6 @@ export default function Delivery() {
                 ref={sendMenuRef}
                 style={{ top: sendMenuPos.top, right: sendMenuPos.right }}
               >
-                <div className="send-menu-group">Images</div>
                 <button
                   type="button"
                   role="menuitem"
@@ -755,25 +754,9 @@ export default function Delivery() {
                   type="button"
                   role="menuitem"
                   className="send-menu-item"
-                  disabled={pendingImages === 0 || acting}
-                  onClick={() => { setSendMenuOpen(false); enqueueBatch(5, 'image', 'first 5 images') }}
-                >Send first 5 images</button>
-                <div className="send-menu-sep" />
-                <div className="send-menu-group">Videos</div>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="send-menu-item"
                   disabled={pendingVideos === 0 || acting}
                   onClick={() => { setSendMenuOpen(false); enqueueBatch(0, 'video', 'all videos') }}
                 >Send all videos{pendingVideos > 0 ? ` (${pendingVideos})` : ''}</button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="send-menu-item"
-                  disabled={pendingVideos === 0 || acting}
-                  onClick={() => { setSendMenuOpen(false); enqueueBatch(5, 'video', 'first 5 videos') }}
-                >Send first 5 videos</button>
                 <div className="send-menu-sep" />
                 <button
                   type="button"
