@@ -2035,8 +2035,14 @@ def delivery_status():
       * if a delivery record exists → use its status/recipient/attempts/etc.
       * if not → fall back to filesystem-derived status ("Queued" if both
         halves present, "Failed" if only one).
+
+    Query: ?history=1 returns the complete audit trail (Delivered + soft-
+    deleted + media-orphaned rows all included). Default returns just the
+    active queue — Failed/Queued/Sending rows whose delivery record
+    isn't soft-deleted. The frontend's "History" toggle flips this flag.
     """
-    merged, counts = _materialise_delivery_view()
+    include_history = (request.args.get("history") or "").strip() in ("1", "true", "yes")
+    merged, counts = _materialise_delivery_view(include_history=include_history)
     return jsonify({
         "status":         "success",
         "count":          len(merged),
@@ -2045,8 +2051,10 @@ def delivery_status():
         "worker":         _worker_status(),
         # Bumped to 2 when each (stem, kind) became its own row. v3 added
         # the recipient-table fallback so pending rows (no delivery yet)
-        # show the real name/phone instead of the raw stem.
-        "schema_version": 3,
+        # show the real name/phone instead of the raw stem. v4 introduced
+        # the queue/history split (?history=1).
+        "schema_version": 4,
+        "view":           "history" if include_history else "queue",
     })
 
 
@@ -2858,11 +2866,33 @@ def _enqueue_recipients(recipient_subset, media_kind=None):
 
             key = (r.get("id"), stem, effective_kind)
             if key in existing:
+                prev = existing[key]
+                # Revive: a soft-deleted prior row should be re-queued
+                # rather than reported as "already exists". Without this
+                # the operator's "Send Media" click after a previous
+                # Clear All would silently no-op for every recipient.
+                if prev.get("deleted"):
+                    now_ms = _now_ms()
+                    prev["deleted"]      = False
+                    prev["deletedAt"]    = None
+                    prev["status"]       = "Queued"
+                    prev["attempts"]     = 0
+                    prev["last_error"]   = None
+                    prev["sentAt"]       = None
+                    prev["deliveredAt"]  = None
+                    prev["updatedAt"]    = now_ms
+                    enqueued.append(prev)
+                    _delivery_log(
+                        "INFO", f"re-enqueued {effective_kind} (was soft-deleted)",
+                        delivery_id=prev["id"], stem=stem, kind=effective_kind,
+                        phone=prev.get("recipient_phone"), name=prev.get("recipient_name"),
+                    )
+                    continue
                 skipped_existing.append({
                     "recipient_id": r.get("id"),
                     "stem":         stem,
                     "kind":         effective_kind,
-                    "status":       existing[key].get("status"),
+                    "status":       prev.get("status"),
                 })
                 continue
 
@@ -2908,7 +2938,7 @@ def _take_next_queued():
         doc = _load_deliveries()
         target = None
         for d in doc["items"]:
-            if d.get("status") == "Queued":
+            if d.get("status") == "Queued" and not d.get("deleted"):
                 target = d
                 break
         if not target:
@@ -3484,12 +3514,17 @@ def deliveries_retry_one(dlv_id):
         if not target:
             return jsonify({"status": "error", "error": "delivery not found"}), 404
         # Reset attempts so the worker can run the auto-retry chain again.
-        target["status"]     = "Queued"
-        target["attempts"]   = 0
-        target["last_error"] = None
-        target["sentAt"]     = None
+        # Also clear any soft-delete flag — the operator hit Retry on a
+        # row they had previously cleared from the queue, so they want
+        # it back.
+        target["status"]      = "Queued"
+        target["attempts"]    = 0
+        target["last_error"]  = None
+        target["sentAt"]      = None
         target["deliveredAt"] = None
-        target["updatedAt"]  = _now_ms()
+        target["deleted"]     = False
+        target["deletedAt"]   = None
+        target["updatedAt"]   = _now_ms()
         _save_deliveries(doc)
     _delivery_log("INFO", "manual retry", delivery_id=dlv_id)
     return jsonify({"status": "success", "item": target})
@@ -3502,6 +3537,11 @@ def deliveries_retry_failed():
     with _DELIVERIES_LOCK:
         doc = _load_deliveries()
         for d in doc["items"]:
+            # Skip soft-deleted Failed rows — the operator already
+            # pulled them out of the active queue and "Retry All Failed"
+            # should only touch what's currently visible there.
+            if d.get("deleted"):
+                continue
             if d.get("status") == "Failed":
                 d["status"]      = "Queued"
                 d["attempts"]    = 0
@@ -3519,46 +3559,103 @@ def deliveries_retry_failed():
 
 @app.route("/deliveries/<dlv_id>", methods=["DELETE"])
 def deliveries_delete(dlv_id):
-    """Remove a single delivery record (audit cleanup)."""
+    """Soft-delete a single delivery record. The row stays in
+    deliveries.json with `deleted: true` so the History view still
+    sees it; the active WhatsApp Send queue hides it.
+
+    Pass ?hard=1 to actually purge — used by the History page's
+    Delete History button when the operator wants the audit trail
+    gone too.
+    """
+    hard = (request.args.get("hard") or "").strip() in ("1", "true", "yes")
+    now_ms = int(time.time() * 1000)
     with _DELIVERIES_LOCK:
         doc = _load_deliveries()
-        before = len(doc["items"])
-        doc["items"] = [d for d in doc["items"] if d.get("id") != dlv_id]
-        if len(doc["items"]) == before:
+        target = None
+        for d in doc["items"]:
+            if d.get("id") == dlv_id:
+                target = d
+                break
+        if target is None:
             return jsonify({"status": "error", "error": "delivery not found"}), 404
+        if hard:
+            doc["items"] = [d for d in doc["items"] if d.get("id") != dlv_id]
+        else:
+            if (target.get("status") or "") == "Sending":
+                return jsonify({
+                    "status": "error",
+                    "error":  "cannot delete a row that is currently Sending",
+                }), 409
+            target["deleted"]   = True
+            target["deletedAt"] = now_ms
+            target["updatedAt"] = now_ms
         _save_deliveries(doc)
-    return jsonify({"status": "success", "count": len(doc["items"])})
+    return jsonify({
+        "status": "success",
+        "count":  len(doc["items"]),
+        "mode":   "hard" if hard else "soft",
+    })
 
 
 @app.route("/deliveries/clear", methods=["POST"])
 def deliveries_clear():
-    """Wipe the whole deliveries table — handy for resetting test runs."""
+    """Clear the active WhatsApp Send queue.
+
+    Body: { confirm: 'yes', hard?: bool }
+      hard=false (default)  — SOFT clear. Marks every non-Sending row
+        as deleted=true; History view still shows them, queue view is
+        now empty. Matches the "Clear All" button on WP Send.
+      hard=true             — HARD wipe. Drops every row from
+        deliveries.json. Used by the History page's Delete History
+        action when the operator wants the audit trail erased too.
+    """
     payload = request.get_json(silent=True) or {}
     confirm = payload.get("confirm")
     if confirm != "yes":
         return jsonify({"status": "error", "error": "pass {confirm: 'yes'} to clear"}), 400
+    hard   = bool(payload.get("hard"))
+    now_ms = int(time.time() * 1000)
     with _DELIVERIES_LOCK:
-        doc = _empty_deliveries_doc()
+        if hard:
+            doc = _empty_deliveries_doc()
+            _save_deliveries(doc)
+            _delivery_log("INFO", "deliveries hard-cleared")
+            return jsonify({"status": "success", "mode": "hard"})
+        doc = _load_deliveries()
+        n_soft = 0
+        for d in doc.get("items", []):
+            if d.get("deleted"):
+                continue
+            if (d.get("status") or "") == "Sending":
+                continue
+            d["deleted"]   = True
+            d["deletedAt"] = now_ms
+            d["updatedAt"] = now_ms
+            n_soft += 1
         _save_deliveries(doc)
-    _delivery_log("INFO", "deliveries cleared")
-    return jsonify({"status": "success"})
+    _delivery_log("INFO", "deliveries soft-cleared", count=n_soft)
+    return jsonify({"status": "success", "mode": "soft", "softDeleted": n_soft})
 
 
 @app.route("/deliveries/delete", methods=["POST"])
 def deliveries_delete_bulk():
-    """Delete specific delivery rows by id. Body: {ids: [<id>, ...]}.
+    """Soft-delete delivery rows by id. Body: {ids: [<id>, ...], hard?: bool}.
     Used by the Delivery page's per-row trash icon + bulk-select toolbar.
     Rows that are currently Sending are skipped (deleting under the worker
     is unsafe); the response reports which ids actually got removed.
-    Distinct from the existing DELETE /deliveries/<dlv_id> handler — that
-    one takes a single id in the URL path; this one takes a list in the
-    body so the UI can fan out a multi-select clear in one request."""
+
+    Default (hard != true) is a SOFT delete — marks deleted=true so the
+    History view still surfaces the row. Pass hard=true to physically
+    drop the rows; the History page uses this when wiping its own
+    records."""
     payload  = request.get_json(silent=True) or {}
     raw_ids  = payload.get("ids") or []
+    hard     = bool(payload.get("hard"))
     if not isinstance(raw_ids, list) or not raw_ids:
         return jsonify({"status": "error", "error": "ids must be a non-empty array"}), 400
     targets = {str(x) for x in raw_ids if x}
     removed, skipped = [], []
+    now_ms = int(time.time() * 1000)
     with _DELIVERIES_LOCK:
         doc = _load_deliveries()
         kept = []
@@ -3568,17 +3665,31 @@ def deliveries_delete_bulk():
                 if (d.get("status") or "") == "Sending":
                     skipped.append({"id": did, "reason": "in-flight"})
                     kept.append(d)
-                else:
+                elif hard:
                     removed.append(did)
+                    # not appended to kept => physically dropped
+                else:
+                    d["deleted"]   = True
+                    d["deletedAt"] = now_ms
+                    d["updatedAt"] = now_ms
+                    removed.append(did)
+                    kept.append(d)
                 continue
             kept.append(d)
         doc["items"] = kept
         _save_deliveries(doc)
-    _delivery_log("INFO", "deliveries deleted", removed=len(removed), skipped=len(skipped))
+    _delivery_log(
+        "INFO",
+        "deliveries deleted",
+        removed=len(removed),
+        skipped=len(skipped),
+        mode="hard" if hard else "soft",
+    )
     return jsonify({
         "status":  "success",
         "removed": removed,
         "skipped": skipped,
+        "mode":    "hard" if hard else "soft",
     })
 
 
@@ -4562,7 +4673,7 @@ def deliveries_logs():
 # derived "Queued" for generated outputs that have never been enqueued.
 # ---------------------------------------------------------------------------
 
-def _materialise_delivery_view():
+def _materialise_delivery_view(include_history: bool = False):
     """Cross-join generated outputs with delivery records — ONE ROW PER
     (stem, kind). A stem that has both an image and a video file
     produces TWO rows so the operator can independently view and send
@@ -4578,6 +4689,17 @@ def _materialise_delivery_view():
         delivery_id, recipient_id, recipient_name, recipient_phone,
         recipient_address                       (when a delivery row exists)
       }
+
+    include_history controls what gets surfaced:
+      False (default) — the WhatsApp Send active queue view. Hides
+        rows that are already Delivered (terminal success) and rows
+        the operator has soft-deleted from the queue. Failed rows stay
+        visible so they can be retried in place.
+      True — the History view. Returns EVERYTHING: delivered, soft-
+        deleted, orphan (media-file-since-deleted) — every record
+        deliveries.json still holds, so the operator gets a complete
+        day-by-day audit trail even after Generated Media is wiped or
+        rows are cleared from the active queue.
     """
     fs_items = _list_generated_items()  # already sorted newest-first
 
@@ -4666,6 +4788,15 @@ def _materialise_delivery_view():
                 base["recipient_name"]    = rec.get("name")
                 base["recipient_phone"]   = rec.get("phone")
                 base["recipient_address"] = rec.get("address")
+            # Active-queue filter: when not in history mode, hide rows
+            # that are already terminal-success (Delivered) or that the
+            # operator soft-deleted from the queue. Failed rows stay so
+            # they can be retried in place.
+            if dlv and not include_history:
+                if dlv.get("deleted"):
+                    continue
+                if (dlv.get("status") or "") == "Delivered":
+                    continue
             if dlv:
                 base.update({
                     "status":              dlv["status"],
@@ -4696,11 +4827,21 @@ def _materialise_delivery_view():
     # off the filesystem, so deleting the files erased every visible
     # send. Delivery records are the source of truth for "did we send
     # this?" and should outlive their media files.
+    #
+    # Orphans get the same queue/history visibility rules as fs-backed
+    # rows: in queue mode, hide if Delivered or soft-deleted (the
+    # operator already finished with them); in history mode, show
+    # everything so the audit trail is complete.
     for (stem, kind), dlv in latest_by_pair.items():
         if kind == "unknown":
             continue  # legacy rows are surfaced via the fs pass above
         if (stem, kind) in emitted_pairs:
             continue
+        if not include_history:
+            if dlv.get("deleted"):
+                continue
+            if (dlv.get("status") or "") == "Delivered":
+                continue
         rec = recipient_by_stem.get(stem)
         orphan = {
             "id":                stem,

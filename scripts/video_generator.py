@@ -436,17 +436,12 @@ with open(ass_path, "w", encoding="utf-8", newline="\n") as f:
 
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-# Compute target bitrates from desired file size + duration. We re-encode
-# the video (not stream-copy) so the personalised render slots cleanly
-# inside Meta's 16 MB ceiling regardless of how heavy the source template
-# was. CRF + maxrate gives us "as good as it can be" up to the cap, so
-# short videos look excellent and long ones still fit.
-target_total_kbps = max(400, int((TARGET_SIZE_MB * 8 * 1024) / duration))
-target_video_kbps = max(300, target_total_kbps - AUDIO_BITRATE_KBPS)
-target_maxrate    = int(target_video_kbps * 1.25)   # 25% headroom for spikes
-target_bufsize    = target_maxrate * 2
-print(f"Size budget: {TARGET_SIZE_MB:.1f} MB over {duration:.1f}s -> "
-      f"video {target_video_kbps}k (cap {target_maxrate}k) + audio {AUDIO_BITRATE_KBPS}k")
+# Note: target bitrates used to be computed here for a CBR-style cap.
+# The main encode now uses CRF only (faster), and the post-encode size-
+# guard recomputes its own fallback budget from the actual overshoot.
+# Kept just the headline target for log readability.
+print(f"Size budget: {TARGET_SIZE_MB:.1f} MB over {duration:.1f}s (CRF-only, "
+      f"size-guard fallback at {WHATSAPP_VIDEO_LIMIT_MB:.0f} MB)")
 
 # Build the filter chain. Background mode decides whether libass
 # alone renders on the template's own designed area, or whether
@@ -482,55 +477,18 @@ else:
 # that failure mode impossible.
 partial_path = output_path + ".partial.mp4"
 
-# Decide audio handling once, up front. AAC inputs (the overwhelmingly
-# common case for consumer mp4s, including anything exported by phones,
-# CapCut, Premiere, etc.) get stream-copied — no decode/re-encode at
-# all. Anything exotic (Vorbis, Opus in mp4, raw PCM) falls back to a
-# clean AAC re-encode so the mp4 muxer doesn't reject the stream.
+# Audio probe — picked up the codec once so we can decide between
+# `-c:a copy` (AAC, the universal case for consumer mp4s) and a real
+# AAC re-encode for exotic inputs. Audio probing is also a precondition
+# for the segment+concat fast path (concat -c copy needs consistent
+# audio streams across segments).
 _audio_codec = get_audio_codec(template_path)
 if _audio_codec == "aac":
-    _AUDIO_ARGS = ["-c:a", "copy"]
     print(f"Audio: {_audio_codec} -> stream-copy (skipping re-encode)")
 elif _audio_codec:
-    _AUDIO_ARGS = ["-c:a", "aac", "-b:a", f"{AUDIO_BITRATE_KBPS}k", "-ac", "2"]
     print(f"Audio: {_audio_codec} -> re-encode to AAC {AUDIO_BITRATE_KBPS}k")
 else:
-    _AUDIO_ARGS = ["-an"]
     print("Audio: no audio stream detected -> output will be silent")
-
-cmd = [
-    ffmpeg_path,
-    "-y",
-    # Use ALL available cores instead of capping at 3. The cap was a
-    # leftover from when we worried about parallel jobs pinning the box,
-    # but the worker is strictly serial (one job at a time, one file at
-    # a time), so capping just leaves CPU on the floor. `0` means "let
-    # x264 pick" — typically n_cores - 1.
-    "-threads", "0",
-    "-i", template_path,
-    "-vf", overlay_filter,
-    # Video re-encode — ultrafast + tune fastdecode + a higher CRF.
-    # CRF 28 is still WhatsApp-tier quality on a phone screen and
-    # encodes ~30% faster than CRF 26. We DROP the maxrate/bufsize cap
-    # because it forces x264 into a CBR-ish mode that's noticeably
-    # slower than CRF-only; size protection is handled by the post-
-    # encode fallback re-encode below if (rarely) the file overshoots
-    # the WhatsApp limit. tune=fastdecode trims another ~10% by
-    # disabling features (CABAC tweaks, loop filter) that only matter
-    # for archival quality.
-    "-c:v", "libx264",
-    "-preset", "ultrafast",
-    "-tune", "fastdecode",
-    "-crf", "28",
-    "-pix_fmt", "yuv420p",
-    # Audio — chosen below based on input codec. AAC → stream-copy
-    # (free); anything else → re-encode at our standard bitrate.
-    *_AUDIO_ARGS,
-    # Faststart moves moov atom to file head so Meta + recipients can
-    # start playing before the full download completes.
-    "-movflags", "+faststart",
-    partial_path,
-]
 
 # Remove any stale output so we can prove a fresh file was created.
 # Also wipe any leftover .partial from a previous crashed run.
@@ -541,20 +499,186 @@ for stale in (output_path, partial_path):
         except OSError:
             pass
 
-print("Running ffmpeg with the following command:")
-for token in cmd:
-    print("   ", token)
-print("CWD:", work_dir)
-print("ASS overlay:\n" + ass_doc)
 
-result = subprocess.run(cmd, cwd=work_dir)
+def _run(cmd_list: list[str], label: str) -> int:
+    """Run an ffmpeg subprocess inside the working dir, printing a
+    one-line marker. Returns the exit code (0 = success)."""
+    print(f"[{label}] " + " ".join(cmd_list))
+    return subprocess.run(cmd_list, cwd=work_dir).returncode
+
+
+# =============================================================================
+# FAST PATH: SEGMENT + CONCAT
+#
+# A typical template is 60-90 s of video where the personalised overlay
+# only occupies the final 3-5 s. Re-encoding the entire clip per
+# recipient burned ~95% of the CPU time on bits that were going to be
+# byte-identical across every recipient. The fix:
+#
+#   pre  = template[0 .. overlay_start]      stream-copy (instant)
+#   mid  = template[overlay_start .. end]    re-encode WITH overlay baked in
+#   post = template[overlay_end .. duration] stream-copy (instant)
+#
+# Then concat them with `-c copy` (no second encode). For a 68-s clip
+# with a 5-s overlay window, the encoder now does ~5 s of real work
+# instead of 68 s — a ~13× speedup. The pre/post stream-copies run at
+# disk-throughput speed (hundreds of MB/s).
+#
+# Preconditions for the fast path:
+#   * The pre segment is non-trivial (start > 5.0 s). Below that the
+#     three-subprocess overhead eats the savings.
+#   * Audio is AAC. Concat -c copy demands consistent audio across
+#     segments — pre/post inherit the source codec and we stream-copy
+#     audio in the mid segment too, so all three need to agree.
+#
+# When either precondition fails we fall through to the single-pass
+# full re-encode at the bottom of this block. That path is also the
+# safety net if any of the three segment subprocesses or the concat
+# step exits non-zero — segment-split is best-effort, never required.
+# =============================================================================
+
+_use_fast_path = (start >= 5.0) and (_audio_codec == "aac")
+_fast_path_ok  = False
+
+if _use_fast_path:
+    print(f"Encode strategy: SEGMENT+CONCAT  pre=0..{start:.2f}s  "
+          f"mid={start:.2f}..{end:.2f}s ({end - start:.2f}s)  "
+          f"post={end:.2f}..{duration:.2f}s")
+
+    mid_duration = end - start
+
+    # Rewrite the ASS file with mid-relative timing. The original ASS
+    # carried absolute timestamps (e.g. 0:01:01.00 for a 61-s overlay)
+    # — fine for the single-pass approach, but wrong here because the
+    # mid segment starts at t=0 from ffmpeg's perspective.
+    ass_mid_doc = build_ass(TEXT_LINES, video_w, video_h, fontsize, 0.0, mid_duration)
+    with open(ass_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(ass_mid_doc)
+
+    # Re-build the drawbox enable window with mid-relative timing too.
+    if BG_MODE in _BG_MODE_TO_COLOUR:
+        _strip_hex = _BG_MODE_TO_COLOUR[BG_MODE]
+        mid_overlay_filter = (
+            "drawbox="
+            f"x=0:y=ih*(1-{STRIP_HEIGHT_PCT}):w=iw:h=ih*{STRIP_HEIGHT_PCT}:"
+            f"color=0x{_strip_hex}@1:t=fill:"
+            f"enable='between(t\\,0\\,{mid_duration:.3f})'"
+            ",ass=overlay.ass"
+        )
+    else:
+        mid_overlay_filter = "ass=overlay.ass"
+
+    pre_path  = os.path.join(work_dir, "pre.mp4")
+    mid_path  = os.path.join(work_dir, "mid.mp4")
+    post_path = os.path.join(work_dir, "post.mp4")
+
+    pre_cmd = [
+        ffmpeg_path, "-y",
+        "-i", template_path,
+        "-t", f"{start:.3f}",
+        "-c", "copy",
+        "-avoid_negative_ts", "make_zero",
+        pre_path,
+    ]
+    mid_cmd = [
+        ffmpeg_path, "-y",
+        "-ss", f"{start:.3f}",
+        "-i", template_path,
+        "-t", f"{mid_duration:.3f}",
+        "-vf", mid_overlay_filter,
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "28",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        mid_path,
+    ]
+    has_post = (duration - end) > 0.5
+    post_cmd = [
+        ffmpeg_path, "-y",
+        "-ss", f"{end:.3f}",
+        "-i", template_path,
+        "-c", "copy",
+        "-avoid_negative_ts", "make_zero",
+        post_path,
+    ] if has_post else None
+
+    _fast_path_ok = (_run(pre_cmd, "pre") == 0) and (_run(mid_cmd, "mid") == 0)
+    if _fast_path_ok and post_cmd is not None:
+        _fast_path_ok = (_run(post_cmd, "post") == 0)
+
+    if _fast_path_ok:
+        # Build the concat list as basenames (work_dir is the cwd, so
+        # `-safe 0` + filenames-only avoids the abs-path escaping
+        # nightmare on Windows).
+        list_path = os.path.join(work_dir, "concat.txt")
+        with open(list_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(f"file 'pre.mp4'\n")
+            f.write(f"file 'mid.mp4'\n")
+            if has_post:
+                f.write(f"file 'post.mp4'\n")
+        concat_cmd = [
+            ffmpeg_path, "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", "concat.txt",
+            "-c", "copy",
+            "-movflags", "+faststart",
+            partial_path,
+        ]
+        _fast_path_ok = (_run(concat_cmd, "concat") == 0)
+
+    if not _fast_path_ok:
+        print("Fast path failed at some step — falling back to single-pass re-encode")
+        if os.path.exists(partial_path):
+            try: os.remove(partial_path)
+            except OSError: pass
+
+
+# =============================================================================
+# SAFE PATH: SINGLE-PASS FULL RE-ENCODE
+#
+# Used when the fast-path preconditions aren't met (short pre segment
+# or non-AAC audio), or as a fallback when any segment/concat step
+# fails. Same flags as before — ultrafast + CRF 28 + the chosen audio
+# strategy — just without the segment split.
+# =============================================================================
+
+if not _fast_path_ok:
+    if _audio_codec == "aac":
+        _AUDIO_ARGS = ["-c:a", "copy"]
+    elif _audio_codec:
+        _AUDIO_ARGS = ["-c:a", "aac", "-b:a", f"{AUDIO_BITRATE_KBPS}k", "-ac", "2"]
+    else:
+        _AUDIO_ARGS = ["-an"]
+
+    # Make sure the ASS file is the absolute-timed version (the fast-
+    # path attempt may have overwritten it with mid-relative timings).
+    with open(ass_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(ass_doc)
+
+    cmd = [
+        ffmpeg_path, "-y",
+        "-threads", "0",
+        "-i", template_path,
+        "-vf", overlay_filter,
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "28",
+        "-pix_fmt", "yuv420p",
+        *_AUDIO_ARGS,
+        "-movflags", "+faststart",
+        partial_path,
+    ]
+    print("Encode strategy: SINGLE-PASS full re-encode")
+    if _run(cmd, "single-pass") != 0:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        if os.path.exists(partial_path):
+            try: os.remove(partial_path)
+            except OSError: pass
+        print("ffmpeg failed")
+        sys.exit(1)
+
 shutil.rmtree(work_dir, ignore_errors=True)
-
-if result.returncode != 0:
-    print("ffmpeg failed with exit code", result.returncode)
-    if os.path.exists(partial_path):
-        os.remove(partial_path)
-    sys.exit(result.returncode)
 
 # Validate the encoded file is actually playable BEFORE swapping it
 # into the final path. ffprobe with `-show_format` reads the moov

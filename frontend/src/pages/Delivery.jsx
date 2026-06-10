@@ -128,9 +128,18 @@ export default function Delivery() {
     toastTimerRef.current = setTimeout(() => setToast(null), 2800)
   }
 
+  // Track the view we're currently fetching for. Read via a ref inside
+  // the never-rearmed poll timer so flipping the History toggle takes
+  // effect on the very next tick without tearing down the schedule.
+  const historyModeRef = useRef(historyMode)
+  useEffect(() => { historyModeRef.current = historyMode }, [historyMode])
+
   async function fetchList() {
     try {
-      const res = await fetch(`${API_BASE}/delivery-status`)
+      const url = historyModeRef.current
+        ? `${API_BASE}/delivery-status?history=1`
+        : `${API_BASE}/delivery-status`
+      const res = await fetch(url)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       if (data && data.status === 'success' && Array.isArray(data.items)) {
@@ -155,6 +164,14 @@ export default function Delivery() {
       setLoaded(true)
     }
   }
+
+  // Re-fetch immediately whenever the operator flips the History toggle —
+  // the dataset is materially different (queue vs. full audit), so we
+  // don't want to wait for the next idle poll.
+  useEffect(() => {
+    fetchList()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyMode])
 
   // Adaptive polling — tight while work is in flight, relaxed when idle.
   //
@@ -457,24 +474,49 @@ export default function Delivery() {
     })
   }
 
-  // Bulk clear — wipes every row from the queue. Confirms first because
-  // it's irreversible.
+  // Bulk clear of the active queue. Soft — every visible row is marked
+  // deleted, so the queue empties out but the History view still shows
+  // them. Used by the WP Send page's "Clear All" button.
   async function clearAll() {
     if (acting) return
     if (items.length === 0) {
       showToast('Queue is already empty', 'info')
       return
     }
-    if (!window.confirm(`Remove ALL ${items.length} rows from the WhatsApp queue? This cannot be undone.`)) return
+    if (!window.confirm(`Remove ALL ${items.length} rows from the WhatsApp queue? They will still appear in History.`)) return
     setActing(true)
     setError(null)
     try {
       await postJson('/deliveries/clear', { confirm: 'yes' })
-      showToast('Queue cleared', 'success')
+      showToast('Queue cleared (History retained)', 'success')
       await fetchList()
     } catch (e) {
       setError(`Clear all failed: ${e.message || e}`)
       showToast(`Clear all failed: ${e.message || e}`, 'error')
+    } finally {
+      setActing(false)
+    }
+  }
+
+  // Hard wipe of the History audit trail. Drops every delivery record
+  // from disk; cannot be undone. Used by the "Delete History" button
+  // inside the History view.
+  async function deleteHistory() {
+    if (acting) return
+    if (items.length === 0) {
+      showToast('No history to delete', 'info')
+      return
+    }
+    if (!window.confirm(`PERMANENTLY delete the entire delivery history (${items.length} rows)? This cannot be undone.`)) return
+    setActing(true)
+    setError(null)
+    try {
+      await postJson('/deliveries/clear', { confirm: 'yes', hard: true })
+      showToast('History deleted', 'success')
+      await fetchList()
+    } catch (e) {
+      setError(`Delete history failed: ${e.message || e}`)
+      showToast(`Delete history failed: ${e.message || e}`, 'error')
     } finally {
       setActing(false)
     }
@@ -807,11 +849,11 @@ export default function Delivery() {
             <button
               type="button"
               className="btn btn-secondary dlv-delete-history-btn"
-              onClick={clearAll}
+              onClick={deleteHistory}
               disabled={acting || items.length === 0}
               title={items.length === 0
                 ? 'No history to delete'
-                : `Delete the entire history (${items.length} rows)`}
+                : `Permanently delete the entire history (${items.length} rows)`}
             >
               🗑 Delete History
             </button>
