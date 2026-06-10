@@ -606,11 +606,20 @@ export default function Delivery() {
   const failedCount = counts.Failed
   // Per-kind pending counts. With the new (stem, kind) row shape every
   // row carries a single media_kind, so we can count directly.
+  //
+  // "Pending" = needs a Send Media click to enter (or re-enter) the
+  // worker queue:
+  //   * no delivery_id yet (truly fresh — never enqueued), OR
+  //   * fresh_after_send (regenerated after a prior Delivered / Read /
+  //     Clear-All — backend will revive the row on enqueue).
+  // Anything else is already in the worker's hands (Queued/Sending) or
+  // has a separate action (Failed → Retry).
+  const isPending = (r) => !r.delivery_id || r.fresh_after_send
   const pendingImages = items.filter(
-    (r) => (r.media_kind === 'image') && !r.delivery_id,
+    (r) => r.media_kind === 'image' && isPending(r),
   ).length
   const pendingVideos = items.filter(
-    (r) => (r.media_kind === 'video') && !r.delivery_id,
+    (r) => r.media_kind === 'video' && isPending(r),
   ).length
   // Total pending across both kinds — drives the dropdown button's
   // count badge AND the disable state for the button.

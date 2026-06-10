@@ -4834,11 +4834,13 @@ def _materialise_delivery_view(include_history: bool = False):
             # soft-deleted. The orphan pass below has its own hide
             # for delete-but-no-file rows so they stay in History
             # only.
+            fresh_after_delete = False
             if dlv and not include_history and dlv.get("deleted"):
                 file_created = it.get("createdAt") or 0
                 deleted_at   = dlv.get("deletedAt") or 0
                 if file_created <= deleted_at + 1000:
                     continue
+                fresh_after_delete = True
             if dlv:
                 base.update({
                     "status":              dlv["status"],
@@ -4878,6 +4880,18 @@ def _materialise_delivery_view(include_history: bool = False):
                             base["fresh_after_send"]  = True
                             base["sentAt"]            = None
                             base["deliveredAt"]       = None
+                # Same visual treatment for the "Clear All → regenerate"
+                # case: the row resurfaced because the file is newer
+                # than the delete event, so present it as Queued and
+                # flag it so the frontend's Send Media counter knows
+                # to include it in the "ready to send" tally.
+                if fresh_after_delete:
+                    base["status"]              = "Queued"
+                    base["prior_status"]        = "Cleared"
+                    base["fresh_after_delete"]  = True
+                    base["fresh_after_send"]    = True   # unified flag
+                    base["sentAt"]              = None
+                    base["deliveredAt"]         = None
             merged.append(base)
             emitted_pairs.add((it["id"], kind))
 
