@@ -1068,15 +1068,45 @@ export default function Delivery() {
                             'Media Sent':       '📤',
                             'Replied':          '↩',
                           }[s] || ''
+                          // Operator-friendly translation of the most
+                          // common Meta failure messages. Falls back to
+                          // the raw last_error string so we never lose
+                          // signal.
+                          const humaniseError = (raw) => {
+                            if (!raw) return ''
+                            const m = String(raw).toLowerCase()
+                            if (m.includes('undeliverable'))
+                              return 'Recipient number not reachable on WhatsApp'
+                            if (m.includes('phone number') && m.includes('invalid'))
+                              return 'Phone number format invalid'
+                            if (m.includes('template')) return 'Template not approved for this recipient'
+                            if (m.includes('rate limit')) return 'Rate-limited by Meta — will retry'
+                            if (m.includes('media') && m.includes('upload'))
+                              return 'Media upload rejected by Meta'
+                            return raw
+                          }
+                          const errLine = (s === 'Failed' && r.last_error)
+                            ? humaniseError(r.last_error)
+                            : null
                           return (
-                            <span
-                              className={`status-pill status-${slug}`}
-                              title={r.last_error ? `Last error: ${r.last_error}` : ''}
-                            >
-                              {icon && <span aria-hidden="true">{icon} </span>}
-                              {s}
-                              {r.attempts > 1 && s !== 'Delivered' && s !== 'Read' && ` ·${r.attempts}`}
-                            </span>
+                            <div className="dlv-status-cell">
+                              <span
+                                className={`status-pill status-${slug}`}
+                                title={r.last_error ? `Raw error: ${r.last_error}` : ''}
+                              >
+                                {icon && <span aria-hidden="true">{icon} </span>}
+                                {s}
+                                {r.attempts > 1 && s !== 'Delivered' && s !== 'Read' && ` ·${r.attempts}`}
+                              </span>
+                              {errLine && (
+                                <span
+                                  className="dlv-status-error"
+                                  title={r.last_error}
+                                >
+                                  {errLine}
+                                </span>
+                              )}
+                            </div>
                           )
                         })()}
                       </td>

@@ -1426,6 +1426,26 @@ table {
   color: var(--danger);
 }
 
+/* Two-line status cell: the pill on top, a soft human-readable
+   reason line beneath for Failed rows. Helps the operator answer
+   "why did this fail?" without hovering for the tooltip. */
+.dlv-status-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dlv-status-error {
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--danger);
+  max-width: 220px;
+  white-space: normal;
+  word-break: break-word;
+}
+
 /* New states for the async-callback model:
    - Pending Callback = Meta accepted, awaiting webhook (light amber/orange,
      calmer than Sending so the operator doesn't read it as "something's wrong")
