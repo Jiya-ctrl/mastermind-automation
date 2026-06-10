@@ -4811,22 +4811,20 @@ def _materialise_delivery_view(include_history: bool = False):
                 base["recipient_name"]    = rec.get("name")
                 base["recipient_phone"]   = rec.get("phone")
                 base["recipient_address"] = rec.get("address")
-            # Active-queue filter (fs-backed pass): only hide soft-
-            # deleted rows. Delivered / Read rows stay visible whenever
-            # the file is still on disk — the operator's mental model
-            # is "Generated Media has 4 videos → WP Send shows 4
-            # rows", and any narrower filter (e.g. hide-Delivered) led
-            # to "I just generated this, why is it missing?" complaints
-            # because the fresh-file mtime vs. deliveredAt comparison
-            # had too many edge cases (same-second regenerate, clock
-            # skew, sub-second granularity). The row's status pill
-            # still tells the operator what state it's in; the orphan
-            # pass below (no file on disk) keeps the Delivered/Read
-            # hide so old delivered-but-deleted rows don't clutter the
-            # active queue.
-            if dlv and not include_history:
-                if dlv.get("deleted"):
-                    continue
+            # Active-queue filter (fs-backed pass): show EVERY row
+            # whose file is still on disk. Hiding for Delivered / Read
+            # / soft-deleted all led to the same complaint: "Generated
+            # Media has N videos, why does WP Send have fewer?" The
+            # operator's mental model is the one source of truth, so
+            # the queue mirrors the filesystem exactly. The row's
+            # status pill carries the state (Delivered, Read, Queued,
+            # Failed); per-row delete is the way to hide individual
+            # rows; a fresh regenerate naturally reuses the same row
+            # (same stem) without needing a revive heuristic. The
+            # orphan pass below (no file on disk) still hides
+            # Delivered/Read/deleted rows in queue view so the audit
+            # trail stays in History but doesn't clutter the queue.
+            pass
             if dlv:
                 base.update({
                     "status":              dlv["status"],
