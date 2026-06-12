@@ -51,8 +51,9 @@ CMD ["gunicorn", \
      "--chdir", "/app/api", \
      "--bind", "0.0.0.0:5000", \
      "--workers", "1", \
-     "--threads", "4", \
+     "--threads", "8", \
      "--timeout", "180", \
+     "--keep-alive", "5", \
      "--access-logfile", "-", \
      "--error-logfile", "-", \
      "app:app"]

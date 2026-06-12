@@ -27,6 +27,7 @@ import tempfile
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 # --------------------------------------------------------------------------
@@ -114,6 +115,10 @@ if os.environ.get("VERCEL") == "1":
 else:
     os.makedirs(JOBS_DIR, exist_ok=True)
 TIMEOUT_SECONDS  = 600  # full image+video render ceiling (10 min/recipient)
+# How many recipients to render in parallel within one job.
+# Each parallel slot runs one ffmpeg/Pillow subprocess. Default 2 is safe for
+# a shared VPS; raise via GENERATOR_PARALLEL_WORKERS env var on beefier hosts.
+PARALLEL_WORKERS = int(os.environ.get("GENERATOR_PARALLEL_WORKERS", "2"))
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # matches the frontend dropzone copy
 
 # Extensions we recognise as "generated outputs" — anything else in the folder
@@ -1274,16 +1279,17 @@ def _run_job(job_id, recipients, kind="all"):
 
 
 def _run_job_inner(job_id, recipients, kind="all"):
-    """Worker thread: runs the requested generators for each recipient
-    sequentially and records results as it goes.
+    """Worker thread: renders the requested generators for each recipient.
+
+    Runs up to PARALLEL_WORKERS recipients concurrently (each fires an
+    independent ffmpeg/Pillow subprocess). Pause/cancel is checked between
+    every batch so the operator can still stop the queue.
 
     `kind` controls which generators run:
       "all"    — image + video (legacy default)
       "images" — image only
       "videos" — video only
-    Sequential by design — image_generator and video_generator both invoke
-    ffmpeg/Pillow + read the same template, so parallelising would mostly
-    stress the disk."""
+    """
     def _set(**kwargs):
         with _JOBS_LOCK:
             if job_id in _JOBS:
@@ -1291,123 +1297,132 @@ def _run_job_inner(job_id, recipients, kind="all"):
                 _JOBS[job_id]["updatedAt"] = int(time.time() * 1000)
                 _persist_job(_JOBS[job_id])
 
-    _set(state="running", startedAt=int(time.time() * 1000))
+    def _tail(s, n=400):
+        s = (s or "").strip()
+        return s[-n:] if len(s) > n else s
 
-    results = []
-    for i, r in enumerate(recipients):
-        # Pause/cancel gate. The worker keeps the current row atomic (so we
-        # don't ship half-rendered recipients), then idles here until the
-        # client either resumes or cancels.
-        #
-        # `pauseEffective` tells the UI the worker has actually reached this
-        # gate — i.e. nothing is rendering right now. Between a user clicking
-        # Pause and the gate being reached, the row in flight is still
-        # finishing; the UI shows "Pausing…" during that window.
-        while True:
-            with _JOBS_LOCK:
-                j = _JOBS.get(job_id, {})
-                if j.get("cancelled"):
-                    _set(state="cancelled", finishedAt=int(time.time() * 1000))
-                    return
-                if not j.get("paused"):
-                    if j.get("pauseEffective"):
-                        _JOBS[job_id]["pauseEffective"] = False
-                    _JOBS[job_id]["current"] = {
-                        "index":   i,
-                        "name":    r.get("name", ""),
-                        "address": r.get("address", ""),
-                        "phone":   r.get("phone", ""),
-                    }
-                    _JOBS[job_id]["updatedAt"] = int(time.time() * 1000)
-                    break
-                # Paused — mark that the worker is actually idle so the UI
-                # can distinguish "pausing" (current row still rendering)
-                # from "paused" (queue truly halted).
-                if not j.get("pauseEffective"):
-                    _JOBS[job_id]["pauseEffective"] = True
-                    _JOBS[job_id]["updatedAt"]      = int(time.time() * 1000)
-            time.sleep(0.3)
-
+    def _process_one(i, r):
+        """Run generators for one recipient; returns the result dict."""
         address = (r.get("address") or "").strip()
         phone   = (r.get("phone") or "").strip()
         name    = (r.get("name") or "").strip()
 
         if not address or not phone:
-            results.append({
+            return {
                 "index": i, "id": r.get("id"), "name": name,
                 "address": address, "phone": phone,
                 "ok": False, "error": "address and phone are required",
-            })
-        else:
-            # MEDIA TYPE dispatch — strictly one pipeline per kind. There is
-            # no shared loop, no Promise.all, no "run both then filter."
-            # Each kind has its OWN dedicated pipeline function.
-            print(
-                f"[/generate-jobs {job_id} row {i + 1}/{len(recipients)}] "
-                f"MEDIA TYPE={kind.upper()} name={name!r} addr={address!r}",
-                flush=True,
-            )
-            image = None
-            video = None
-            if kind == "images":
-                image = _run_image_pipeline(address, phone, name)
-            elif kind == "videos":
-                video = _run_video_pipeline(address, phone, name)
-            elif kind == "all":
-                # Legacy kind — explicit AND of the two named pipelines.
-                # Used only when a caller explicitly opts in via kind='all'.
-                image = _run_image_pipeline(address, phone, name)
-                video = _run_video_pipeline(address, phone, name)
-            row_ok = (image["ok"] if image else True) and (video["ok"] if video else True)
-
-            def _tail(s, n=400):
-                s = (s or "").strip()
-                return s[-n:] if len(s) > n else s
-
-            row = {
-                "index":   i,
-                "id":      r.get("id"),
-                "name":    name,
-                "address": address,
-                "phone":   phone,
-                "ok":      row_ok,
             }
-            if image is not None:
-                row["image"] = {
-                    "ok":     image["ok"],
-                    "path":   image["path"],
-                    "stderr": _tail(image["stderr"]) if not image["ok"] else "",
-                }
-            if video is not None:
-                row["video"] = {
-                    "ok":     video["ok"],
-                    "path":   video["path"],
-                    "stderr": _tail(video["stderr"]) if not video["ok"] else "",
-                }
-            results.append(row)
 
-        with _JOBS_LOCK:
-            if job_id in _JOBS:
-                _JOBS[job_id]["progress"] = i + 1
-                _JOBS[job_id]["results"]  = list(results)
+        # MEDIA TYPE dispatch — strictly one pipeline per kind.
+        print(
+            f"[/generate-jobs {job_id} row {i + 1}/{len(recipients)}] "
+            f"MEDIA TYPE={kind.upper()} name={name!r} addr={address!r}",
+            flush=True,
+        )
+        image = video = None
+        if kind == "images":
+            image = _run_image_pipeline(address, phone, name)
+        elif kind == "videos":
+            video = _run_video_pipeline(address, phone, name)
+        elif kind == "all":
+            image = _run_image_pipeline(address, phone, name)
+            video = _run_video_pipeline(address, phone, name)
 
-    succeeded = sum(1 for x in results if x["ok"])
-    # Count which kinds of files were actually produced — make pipeline
-    # isolation visible in the logs.
-    image_count = sum(1 for r in results if (r.get("image") or {}).get("ok"))
-    video_count = sum(1 for r in results if (r.get("video") or {}).get("ok"))
+        row_ok = (image["ok"] if image else True) and (video["ok"] if video else True)
+        row = {
+            "index": i, "id": r.get("id"), "name": name,
+            "address": address, "phone": phone, "ok": row_ok,
+        }
+        if image is not None:
+            row["image"] = {
+                "ok": image["ok"], "path": image["path"],
+                "stderr": _tail(image["stderr"]) if not image["ok"] else "",
+            }
+        if video is not None:
+            row["video"] = {
+                "ok": video["ok"], "path": video["path"],
+                "stderr": _tail(video["stderr"]) if not video["ok"] else "",
+            }
+        return row
+
+    _set(state="running", startedAt=int(time.time() * 1000))
+
+    total      = len(recipients)
+    results    = {}   # index -> result dict (filled as futures complete)
+    offset     = 0
+
+    with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as pool:
+        while offset < total:
+            # --- Pause / cancel gate (checked between every batch) ----------
+            while True:
+                with _JOBS_LOCK:
+                    j = _JOBS.get(job_id, {})
+                    if j.get("cancelled"):
+                        _set(state="cancelled", finishedAt=int(time.time() * 1000))
+                        return
+                    if not j.get("paused"):
+                        if j.get("pauseEffective"):
+                            _JOBS[job_id]["pauseEffective"] = False
+                        # Mark the first row of this batch as "current"
+                        r0 = recipients[offset]
+                        _JOBS[job_id]["current"] = {
+                            "index":   offset,
+                            "name":    r0.get("name", ""),
+                            "address": r0.get("address", ""),
+                            "phone":   r0.get("phone", ""),
+                        }
+                        _JOBS[job_id]["updatedAt"] = int(time.time() * 1000)
+                        break
+                    if not j.get("pauseEffective"):
+                        _JOBS[job_id]["pauseEffective"] = True
+                        _JOBS[job_id]["updatedAt"]      = int(time.time() * 1000)
+                time.sleep(0.3)
+            # ----------------------------------------------------------------
+
+            # Submit this batch
+            batch   = recipients[offset: offset + PARALLEL_WORKERS]
+            futures = {
+                pool.submit(_process_one, offset + j, r): offset + j
+                for j, r in enumerate(batch)
+            }
+
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:                       # noqa: BLE001
+                    r = recipients[idx]
+                    results[idx] = {
+                        "index": idx, "id": r.get("id"),
+                        "name": r.get("name", ""), "address": r.get("address", ""),
+                        "phone": r.get("phone", ""), "ok": False, "error": str(e),
+                    }
+
+                with _JOBS_LOCK:
+                    if job_id in _JOBS:
+                        _JOBS[job_id]["progress"] = len(results)
+                        _JOBS[job_id]["results"]  = [results[k] for k in sorted(results)]
+                        _JOBS[job_id]["updatedAt"] = int(time.time() * 1000)
+                        _persist_job(_JOBS[job_id])
+
+            offset += PARALLEL_WORKERS
+
+    ordered     = [results[k] for k in sorted(results)]
+    succeeded   = sum(1 for x in ordered if x["ok"])
+    image_count = sum(1 for r in ordered if (r.get("image") or {}).get("ok"))
+    video_count = sum(1 for r in ordered if (r.get("video") or {}).get("ok"))
     print(
         f"[/generate-jobs {job_id}] FINISHED kind={kind.upper()} "
-        f"succeeded={succeeded}/{len(results)} "
+        f"succeeded={succeeded}/{len(ordered)} "
         f"produced: {image_count} image(s), {video_count} video(s)",
         flush=True,
     )
-    final_state = "done"
     _set(
-        state=final_state,
+        state="done",
         finishedAt=int(time.time() * 1000),
         succeeded=succeeded,
-        failed=len(results) - succeeded,
+        failed=len(ordered) - succeeded,
         current=None,
     )
 
