@@ -178,13 +178,7 @@ export default function Sheets() {
     const remaining = items.filter((r) => !selectedRows.has(r.id))
     setSavingBulk(true)
     try {
-      const res = await fetch(`${API_BASE}/recipients/replace`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ recipients: remaining }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || res.status)
+      await postJson('/recipients/replace', { recipients: remaining })
       setItems(remaining)
       setSelectedRows(new Set())
     } catch (e) {
