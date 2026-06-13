@@ -16876,18 +16876,16 @@ select.pstyle-input { cursor: pointer; }
 
 /* Custom caption textarea (Delivery page) */
 .delivery-caption-input {
-  width: 100%;
-  min-width: 260px;
-  max-width: 420px;
-  padding: 8px 12px;
+  width: 280px;
+  padding: 7px 10px;
   border: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 8px;
   background: #FFFFFF;
   color: #0B1C30;
   font-family: inherit;
   font-size: 13px;
-  line-height: 1.5;
-  resize: vertical;
+  line-height: 1.4;
+  resize: none;
   outline: none;
   transition: border-color 0.18s;
 }

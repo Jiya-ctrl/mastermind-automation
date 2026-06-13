@@ -729,10 +729,10 @@ export default function Delivery() {
                 as WhatsApp caption alongside every video/image. */}
             <textarea
               className="delivery-caption-input"
-              placeholder="Add a message (optional) e.g. Happy Holi! 🎉"
+              placeholder="Add a message e.g. Happy Holi! 🎉"
               value={customCaption}
               onChange={(e) => setCustomCaption(e.target.value)}
-              rows={2}
+              rows={1}
               maxLength={1024}
             />
 
