@@ -852,7 +852,7 @@ export default function Delivery() {
         <label className="delivery-caption-label">Message (optional)</label>
         <textarea
           className="delivery-caption-input"
-          placeholder="e.g. Happy Holi! 🎉  or  Dear student, please find your result."
+          placeholder="e.g. 🎉 Happy Holi! Wishing you and your family a colourful celebration!"
           value={customCaption}
           onChange={(e) => setCustomCaption(e.target.value)}
           rows={2}
@@ -909,6 +909,7 @@ export default function Delivery() {
           operator sees one number per meaningful outcome: All / In progress
           / Awaiting Reply / Done / Failed. Each chip toggles a table filter
           and matches on the underlying raw statuses. */}
+      <div className="dlv-status-card">
       <div className="status-strip">
         {(() => {
           // (label, tone, value, matchSet)
@@ -949,6 +950,7 @@ export default function Delivery() {
             )
           })
         })()}
+      </div>
       </div>
 
       <section className="card">

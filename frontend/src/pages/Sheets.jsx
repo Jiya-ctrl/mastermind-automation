@@ -67,6 +67,7 @@ export default function Sheets() {
   // UI mode.
   const [editMode, setEditMode] = useState(false)
   const [addOpen,  setAddOpen]  = useState(false)
+  const [selectedRows, setSelectedRows] = useState(() => new Set())
   // 'paste' | 'file' | 'gsheet' — which import method the add-panel shows.
   const [importMode, setImportMode] = useState('paste')
   const [csvText,  setCsvText]  = useState('')
@@ -170,6 +171,27 @@ export default function Sheets() {
   }
   function addBufferRow() {
     setBuffer((b) => [...b, blankRow()])
+  }
+
+  async function deleteSelectedRows() {
+    if (selectedRows.size === 0) return
+    const remaining = items.filter((r) => !selectedRows.has(r.id))
+    setSavingBulk(true)
+    try {
+      const res = await fetch(`${API_BASE}/recipients/replace`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ recipients: remaining }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || res.status)
+      setItems(remaining)
+      setSelectedRows(new Set())
+    } catch (e) {
+      setError(`Delete failed: ${e.message}`)
+    } finally {
+      setSavingBulk(false)
+    }
   }
 
   async function saveEdit() {
@@ -1180,6 +1202,16 @@ export default function Sheets() {
                 >Cancel</button>
               </>
             )}
+            {!editMode && selectedRows.size > 0 && (
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => {
+                  if (window.confirm(`Delete ${selectedRows.size} selected row(s)?`)) deleteSelectedRows()
+                }}
+                disabled={savingBulk}
+              >🗑 Delete Selected ({selectedRows.size})</button>
+            )}
           </div>
         </div>
 
@@ -1187,6 +1219,17 @@ export default function Sheets() {
           <table className="delivery-table sheets-recipient-table">
             <thead>
               <tr>
+                <th style={{ width: 36 }}>
+                  <input
+                    type="checkbox"
+                    title="Select all"
+                    checked={filtered.length > 0 && filtered.every((r) => selectedRows.has(r.id))}
+                    onChange={(e) => {
+                      if (e.target.checked) setSelectedRows(new Set(filtered.map((r) => r.id)))
+                      else setSelectedRows(new Set())
+                    }}
+                  />
+                </th>
                 <th style={{ width: 60 }}>#</th>
                 <th>Contact Name</th>
                 <th>Phone Number</th>
@@ -1202,7 +1245,20 @@ export default function Sheets() {
                 const realIdx = rowIndexMap.get(r) ?? -1
                 const rowIssues = issueByIndex.get(realIdx)
                 return (
-                  <tr key={r.id || `new-${realIdx}`}>
+                  <tr key={r.id || `new-${realIdx}`} className={selectedRows.has(r.id) ? 'row-selected' : ''}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedRows.has(r.id)}
+                        onChange={(e) => {
+                          setSelectedRows((prev) => {
+                            const next = new Set(prev)
+                            e.target.checked ? next.add(r.id) : next.delete(r.id)
+                            return next
+                          })
+                        }}
+                      />
+                    </td>
                     <td className="cell-faint">{realIdx + 1}</td>
 
                     <td>

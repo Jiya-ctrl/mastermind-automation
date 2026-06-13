@@ -16196,6 +16196,13 @@ tr.is-selected td { background: rgba(249, 115, 22, 0.06); }
   background: #B91C1C;
   border-color: #991B1B;
 }
+.btn.btn-danger {
+  background: #DC2626;
+  color: #ffffff;
+  border: 1px solid #B91C1C;
+}
+.btn.btn-danger:hover { background: #B91C1C; }
+tr.row-selected td { background: rgba(249,115,22,0.06); }
 
 /* Dark mode — warm charcoal card on warm-black overlay */
 [data-theme="dark"] .logout-confirm-overlay {
@@ -16873,6 +16880,20 @@ select.pstyle-input { cursor: pointer; }
 [data-theme="dark"] .status-strip-chip-warning .status-strip-value { color: #FCD34D; }
 [data-theme="dark"] .status-strip-chip-danger  .status-strip-value { color: #FCA5A5; }
 [data-theme="dark"] .status-strip-chip-muted   .status-strip-value { color: #D1D5DB; }
+
+/* Status chips card wrapper */
+.dlv-status-card {
+  background: #FFFFFF;
+  border: 1px solid rgba(15,23,42,0.07);
+  border-radius: 12px;
+  padding: 12px 18px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 8px rgba(15,23,42,0.04);
+}
+[data-theme="dark"] .dlv-status-card {
+  background: #211D1A;
+  border-color: rgba(255,255,255,0.07);
+}
 
 /* Custom caption bar (Delivery page — below banner, above table) */
 .delivery-caption-bar {
