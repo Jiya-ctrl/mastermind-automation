@@ -177,8 +177,15 @@ export default function Sheets() {
     if (selectedRows.size === 0) return
     const remaining = items.filter((r) => !selectedRows.has(r.id))
     setSavingBulk(true)
+    setError(null)
     try {
-      await postJson('/recipients/replace', { recipients: remaining })
+      const res = await fetch(`${API_BASE}/recipients/replace`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ recipients: remaining }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || String(res.status))
       setItems(remaining)
       setSelectedRows(new Set())
     } catch (e) {
@@ -1206,7 +1213,7 @@ export default function Sheets() {
               onClick={() => setSelectedRows(new Set(filtered.map((r) => r.id)))}
             >Select All ({filtered.length})</button>
             <button type="button" className="btn btn-danger sheets-bulk-btn"
-              onClick={() => { if (window.confirm(`Delete ${selectedRows.size} selected row(s)?`)) deleteSelectedRows() }}
+              onClick={deleteSelectedRows}
               disabled={savingBulk}
             >🗑 Delete Selected ({selectedRows.size})</button>
             <button type="button" className="btn btn-ghost sheets-bulk-btn"
