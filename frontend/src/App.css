@@ -16874,29 +16874,62 @@ select.pstyle-input { cursor: pointer; }
 [data-theme="dark"] .status-strip-chip-danger  .status-strip-value { color: #FCA5A5; }
 [data-theme="dark"] .status-strip-chip-muted   .status-strip-value { color: #D1D5DB; }
 
-/* Custom caption textarea (Delivery page) */
+/* Custom caption bar (Delivery page — below banner, above table) */
+.delivery-caption-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 18px;
+  background: #FFFFFF;
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: 12px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
+.delivery-caption-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8C7164;
+  white-space: nowrap;
+  padding-top: 6px;
+}
 .delivery-caption-input {
-  width: 280px;
+  flex: 1;
   padding: 7px 10px;
   border: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 8px;
-  background: #FFFFFF;
+  background: #F7F4ED;
   color: #0B1C30;
   font-family: inherit;
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 13.5px;
+  line-height: 1.5;
   resize: none;
   outline: none;
   transition: border-color 0.18s;
 }
-.delivery-caption-input:focus { border-color: #F97316; }
+.delivery-caption-input:focus { border-color: #F97316; background: #FFFFFF; }
 .delivery-caption-input::placeholder { color: #8C7164; }
-[data-theme="dark"] .delivery-caption-input {
+.delivery-caption-count {
+  font-size: 11px;
+  color: #8C7164;
+  white-space: nowrap;
+  padding-top: 6px;
+}
+[data-theme="dark"] .delivery-caption-bar {
   background: #211D1A;
+  border-color: rgba(255,255,255,0.07);
+}
+[data-theme="dark"] .delivery-caption-input {
+  background: #1D1917;
   color: #F5F1EB;
   border-color: rgba(255,255,255,0.1);
 }
+[data-theme="dark"] .delivery-caption-input:focus { background: #211D1A; }
 [data-theme="dark"] .delivery-caption-input::placeholder { color: #847A6F; }
+[data-theme="dark"] .delivery-caption-label,
+[data-theme="dark"] .delivery-caption-count { color: #847A6F; }
 
 /* Inline send-gap stepper (Delivery page page-banner) */
 .send-gap-inline {

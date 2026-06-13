@@ -725,17 +725,6 @@ export default function Delivery() {
         })()}
         actions={
           <>
-            {/* Custom caption — operator types a message that goes
-                as WhatsApp caption alongside every video/image. */}
-            <textarea
-              className="delivery-caption-input"
-              placeholder="Add a message e.g. Happy Holi! 🎉"
-              value={customCaption}
-              onChange={(e) => setCustomCaption(e.target.value)}
-              rows={1}
-              maxLength={1024}
-            />
-
             {/* Inline send-gap stepper — same backend knob as the
                 Settings page so changes here propagate. Compact 3-button
                 layout to fit alongside Send/Retry. */}
@@ -855,6 +844,24 @@ export default function Delivery() {
         }
       />
 
+
+      {/* Custom message box — operator types a caption sent alongside
+          every video/image. Kept outside the banner so the title never
+          gets squeezed. */}
+      <div className="delivery-caption-bar">
+        <label className="delivery-caption-label">Message (optional)</label>
+        <textarea
+          className="delivery-caption-input"
+          placeholder="e.g. Happy Holi! 🎉  or  Dear student, please find your result."
+          value={customCaption}
+          onChange={(e) => setCustomCaption(e.target.value)}
+          rows={2}
+          maxLength={1024}
+        />
+        {customCaption.trim() && (
+          <span className="delivery-caption-count">{customCaption.trim().length}/1024</span>
+        )}
+      </div>
 
       {error && (
         <div className="tmpl-error" role="alert">
