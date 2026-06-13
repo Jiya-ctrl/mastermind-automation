@@ -182,7 +182,7 @@ export default function Sheets() {
       const res = await fetch(`${API_BASE}/recipients/replace`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ recipients: remaining }),
+        body:    JSON.stringify({ items: remaining }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || String(res.status))
