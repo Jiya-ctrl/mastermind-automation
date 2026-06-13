@@ -2836,6 +2836,7 @@ def _make_delivery(recipient, video_filename, image_filename, media_kind=None):
         "attempts":            0,
         "max_attempts":        _MAX_ATTEMPTS,
         "last_error":          None,
+        "operator_caption":    None,
         "createdAt":           _now_ms(),
         "updatedAt":           _now_ms(),
         "sentAt":              None,
@@ -2852,7 +2853,7 @@ def _resolve_auto_kind(recipient_stem, videos, images):
     return det["kind"]
 
 
-def _enqueue_recipients(recipient_subset, media_kind=None):
+def _enqueue_recipients(recipient_subset, media_kind=None, caption=None):
     """For each recipient, look up matching generated files and create a
     new Queued delivery. Returns a summary dict.
 
@@ -3020,6 +3021,8 @@ def _enqueue_recipients(recipient_subset, media_kind=None):
                 i["filename"] if i else None,
                 media_kind=effective_kind,
             )
+            if caption:
+                new["operator_caption"] = caption
             doc["items"].append(new)
             enqueued.append(new)
             _delivery_log(
@@ -3640,12 +3643,14 @@ def deliveries_enqueue_all():
                 "error":  "kind must be 'image' or 'video' (omit for paired send)",
             }), 400
 
+    caption = (payload.get("caption") or "").strip() or None
+
     with _RECIPIENTS_LOCK:
         rdoc = _load_recipients()
     pool = rdoc["items"]
     if limit:
         pool = pool[:limit]
-    result = _enqueue_recipients(pool, media_kind=kind)
+    result = _enqueue_recipients(pool, media_kind=kind, caption=caption)
     return jsonify({"status": "success", "limit": limit, "kind": kind, **result})
 
 

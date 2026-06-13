@@ -297,8 +297,9 @@ class WhatsAppCloudProvider(BaseProvider):
         in the last 24h). Outside that window Meta returns 131047/131049
         — this is the documented cause of the 'healthy ecosystem
         engagement' rejection. Kept for sandbox/test recipients only."""
-        caption = None
-        if self.caption_template:
+        # Operator-typed caption takes priority over the config template.
+        caption = (delivery.get("operator_caption") or "").strip() or None
+        if not caption and self.caption_template:
             try:
                 caption = self.caption_template.format(
                     name=delivery.get("recipient_name") or "",

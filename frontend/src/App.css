@@ -16874,6 +16874,32 @@ select.pstyle-input { cursor: pointer; }
 [data-theme="dark"] .status-strip-chip-danger  .status-strip-value { color: #FCA5A5; }
 [data-theme="dark"] .status-strip-chip-muted   .status-strip-value { color: #D1D5DB; }
 
+/* Custom caption textarea (Delivery page) */
+.delivery-caption-input {
+  width: 100%;
+  min-width: 260px;
+  max-width: 420px;
+  padding: 8px 12px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  background: #FFFFFF;
+  color: #0B1C30;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.18s;
+}
+.delivery-caption-input:focus { border-color: #F97316; }
+.delivery-caption-input::placeholder { color: #8C7164; }
+[data-theme="dark"] .delivery-caption-input {
+  background: #211D1A;
+  color: #F5F1EB;
+  border-color: rgba(255,255,255,0.1);
+}
+[data-theme="dark"] .delivery-caption-input::placeholder { color: #847A6F; }
+
 /* Inline send-gap stepper (Delivery page page-banner) */
 .send-gap-inline {
   display: inline-flex;

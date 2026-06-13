@@ -103,6 +103,10 @@ export default function Delivery() {
   // most-recent activity timestamp (Today / Yesterday / Earlier).
   const [historyMode, setHistoryMode] = useState(false)
 
+  // Optional custom caption the operator types before sending.
+  // Stored here so it persists across menu open/close.
+  const [customCaption, setCustomCaption] = useState('')
+
   // 'acting' disables bulk buttons while a server call is in flight so the
   // user cannot double-click into a duplicate retry / enqueue.
   const [acting, setActing] = useState(false)
@@ -336,7 +340,8 @@ export default function Delivery() {
     setActing(true)
     setError(null)
     try {
-      const data = await postJson('/deliveries/enqueue-all', { limit, kind })
+      const caption = customCaption.trim() || undefined
+      const data = await postJson('/deliveries/enqueue-all', { limit, kind, caption })
       // Backend returns `enqueued` as a COUNT (int), with the full record
       // objects in `items`. Don't treat enqueued as a list.
       const n = typeof data.enqueued === 'number'
@@ -720,6 +725,17 @@ export default function Delivery() {
         })()}
         actions={
           <>
+            {/* Custom caption — operator types a message that goes
+                as WhatsApp caption alongside every video/image. */}
+            <textarea
+              className="delivery-caption-input"
+              placeholder="Add a message (optional) e.g. Happy Holi! 🎉"
+              value={customCaption}
+              onChange={(e) => setCustomCaption(e.target.value)}
+              rows={2}
+              maxLength={1024}
+            />
+
             {/* Inline send-gap stepper — same backend knob as the
                 Settings page so changes here propagate. Compact 3-button
                 layout to fit alongside Send/Retry. */}
