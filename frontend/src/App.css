@@ -16203,6 +16203,18 @@ tr.is-selected td { background: rgba(249, 115, 22, 0.06); }
 }
 .btn.btn-danger:hover { background: #B91C1C; }
 tr.row-selected td { background: rgba(249,115,22,0.06); }
+.sheets-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(249,115,22,0.06);
+  border: 1px solid rgba(249,115,22,0.2);
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+.sheets-bulk-count { font-size: 13px; font-weight: 600; color: #F97316; margin-right: 4px; }
+.sheets-bulk-btn { height: 32px !important; padding: 0 12px !important; font-size: 12.5px !important; }
 
 /* Dark mode — warm charcoal card on warm-black overlay */
 [data-theme="dark"] .logout-confirm-overlay {

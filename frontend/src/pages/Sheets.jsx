@@ -1202,34 +1202,42 @@ export default function Sheets() {
                 >Cancel</button>
               </>
             )}
-            {!editMode && selectedRows.size > 0 && (
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={() => {
-                  if (window.confirm(`Delete ${selectedRows.size} selected row(s)?`)) deleteSelectedRows()
-                }}
-                disabled={savingBulk}
-              >🗑 Delete Selected ({selectedRows.size})</button>
-            )}
           </div>
         </div>
+
+        {!editMode && selectedRows.size > 0 && (
+          <div className="sheets-bulk-bar">
+            <span className="sheets-bulk-count">{selectedRows.size} row{selectedRows.size > 1 ? 's' : ''} selected</span>
+            <button type="button" className="btn btn-ghost sheets-bulk-btn"
+              onClick={() => setSelectedRows(new Set(filtered.map((r) => r.id)))}
+            >Select All ({filtered.length})</button>
+            <button type="button" className="btn btn-danger sheets-bulk-btn"
+              onClick={() => { if (window.confirm(`Delete ${selectedRows.size} selected row(s)?`)) deleteSelectedRows() }}
+              disabled={savingBulk}
+            >🗑 Delete Selected ({selectedRows.size})</button>
+            <button type="button" className="btn btn-ghost sheets-bulk-btn"
+              onClick={() => setSelectedRows(new Set())}
+            >Clear</button>
+          </div>
+        )}
 
         <div className="table-wrap sheets-recipient-tablewrap">
           <table className="delivery-table sheets-recipient-table">
             <thead>
               <tr>
-                <th style={{ width: 36 }}>
-                  <input
-                    type="checkbox"
-                    title="Select all"
-                    checked={filtered.length > 0 && filtered.every((r) => selectedRows.has(r.id))}
-                    onChange={(e) => {
-                      if (e.target.checked) setSelectedRows(new Set(filtered.map((r) => r.id)))
-                      else setSelectedRows(new Set())
-                    }}
-                  />
-                </th>
+                {!editMode && (
+                  <th style={{ width: 36 }}>
+                    <input
+                      type="checkbox"
+                      title="Select all"
+                      checked={filtered.length > 0 && filtered.every((r) => selectedRows.has(r.id))}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedRows(new Set(filtered.map((r) => r.id)))
+                        else setSelectedRows(new Set())
+                      }}
+                    />
+                  </th>
+                )}
                 <th style={{ width: 60 }}>#</th>
                 <th>Contact Name</th>
                 <th>Phone Number</th>
@@ -1245,20 +1253,22 @@ export default function Sheets() {
                 const realIdx = rowIndexMap.get(r) ?? -1
                 const rowIssues = issueByIndex.get(realIdx)
                 return (
-                  <tr key={r.id || `new-${realIdx}`} className={selectedRows.has(r.id) ? 'row-selected' : ''}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={selectedRows.has(r.id)}
-                        onChange={(e) => {
-                          setSelectedRows((prev) => {
-                            const next = new Set(prev)
-                            e.target.checked ? next.add(r.id) : next.delete(r.id)
-                            return next
-                          })
-                        }}
-                      />
-                    </td>
+                  <tr key={r.id || `new-${realIdx}`} className={(!editMode && selectedRows.has(r.id)) ? 'row-selected' : ''}>
+                    {!editMode && (
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedRows.has(r.id)}
+                          onChange={(e) => {
+                            setSelectedRows((prev) => {
+                              const next = new Set(prev)
+                              e.target.checked ? next.add(r.id) : next.delete(r.id)
+                              return next
+                            })
+                          }}
+                        />
+                      </td>
+                    )}
                     <td className="cell-faint">{realIdx + 1}</td>
 
                     <td>
