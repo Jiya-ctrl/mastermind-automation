@@ -103,9 +103,17 @@ export default function Delivery() {
   // most-recent activity timestamp (Today / Yesterday / Earlier).
   const [historyMode, setHistoryMode] = useState(false)
 
-  // Optional custom caption the operator types before sending.
-  // Stored here so it persists across menu open/close.
-  const [customCaption, setCustomCaption] = useState('')
+  // Custom caption — loaded from localStorage so it persists across sessions.
+  const [customCaption, setCustomCaption] = useState(
+    () => localStorage.getItem('mm_send_caption') || ''
+  )
+  const [captionSaved, setCaptionSaved] = useState(false)
+
+  function saveCaption() {
+    localStorage.setItem('mm_send_caption', customCaption)
+    setCaptionSaved(true)
+    setTimeout(() => setCaptionSaved(false), 2000)
+  }
 
   // 'acting' disables bulk buttons while a server call is in flight so the
   // user cannot double-click into a duplicate retry / enqueue.
@@ -854,13 +862,20 @@ export default function Delivery() {
           className="delivery-caption-input"
           placeholder="e.g. 🎉 Happy Holi! Wishing you and your family a colourful celebration!"
           value={customCaption}
-          onChange={(e) => setCustomCaption(e.target.value)}
+          onChange={(e) => { setCustomCaption(e.target.value); setCaptionSaved(false) }}
           rows={2}
           maxLength={1024}
         />
-        {customCaption.trim() && (
-          <span className="delivery-caption-count">{customCaption.trim().length}/1024</span>
-        )}
+        <div className="delivery-caption-actions">
+          <button
+            type="button"
+            className={`btn delivery-caption-save-btn${captionSaved ? ' saved' : ''}`}
+            onClick={saveCaption}
+          >{captionSaved ? '✓ Saved!' : 'Save'}</button>
+          {customCaption.trim() && (
+            <span className="delivery-caption-count">{customCaption.trim().length}/1024</span>
+          )}
+        </div>
       </div>
 
       {error && (

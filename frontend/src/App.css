@@ -16944,11 +16944,31 @@ select.pstyle-input { cursor: pointer; }
 }
 .delivery-caption-input:focus { border-color: #F97316; background: #FFFFFF; }
 .delivery-caption-input::placeholder { color: #8C7164; }
+.delivery-caption-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.delivery-caption-save-btn {
+  height: 34px !important;
+  padding: 0 14px !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  background: #F97316;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.18s;
+}
+.delivery-caption-save-btn:hover { background: #EA580C; }
+.delivery-caption-save-btn.saved { background: #16A34A; }
 .delivery-caption-count {
   font-size: 11px;
   color: #8C7164;
   white-space: nowrap;
-  padding-top: 6px;
 }
 [data-theme="dark"] .delivery-caption-bar {
   background: #211D1A;
