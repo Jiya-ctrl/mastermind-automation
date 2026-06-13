@@ -449,11 +449,10 @@ class WhatsAppCloudProvider(BaseProvider):
             return {"ok": False, "provider_message_id": None,
                     "error": f"no signed {kind} URL on delivery row"}
 
-        # `force_freeform` is set by the worker for stage-2 of the
-        # two-step engagement flow: the recipient just replied, so we're
-        # inside Meta's 24h window and freeform sends are allowed (and
-        # preferred — no per-recipient template substitution needed).
-        template_name = None if force_freeform else self._template_name_for(kind)
+        # When operator typed a custom caption, bypass the template so the
+        # caption goes as freeform text. Templates don't support free-text.
+        has_caption = bool((delivery.get("operator_caption") or "").strip())
+        template_name = None if (force_freeform or has_caption) else self._template_name_for(kind)
         if template_name:
             payload = self._build_template_payload(
                 to, kind, media_url, delivery, template_name,

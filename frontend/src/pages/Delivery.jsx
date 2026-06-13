@@ -103,16 +103,26 @@ export default function Delivery() {
   // most-recent activity timestamp (Today / Yesterday / Earlier).
   const [historyMode, setHistoryMode] = useState(false)
 
-  // Custom caption — loaded from localStorage so it persists across sessions.
-  const [customCaption, setCustomCaption] = useState(
-    () => localStorage.getItem('mm_send_caption') || ''
-  )
+  const [customCaption, setCustomCaption] = useState('')
   const [captionSaved, setCaptionSaved] = useState(false)
 
-  function saveCaption() {
-    localStorage.setItem('mm_send_caption', customCaption)
-    setCaptionSaved(true)
-    setTimeout(() => setCaptionSaved(false), 2000)
+  // Load saved caption from server on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/deliveries/caption`)
+      .then((r) => r.json()).catch(() => ({}))
+      .then((d) => { if (d.caption) setCustomCaption(d.caption) })
+  }, [])
+
+  async function saveCaption() {
+    try {
+      await fetch(`${API_BASE}/deliveries/caption`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ caption: customCaption }),
+      })
+      setCaptionSaved(true)
+      setTimeout(() => setCaptionSaved(false), 2000)
+    } catch (_) { /* ignore */ }
   }
 
   // 'acting' disables bulk buttons while a server call is in flight so the

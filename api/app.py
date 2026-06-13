@@ -3331,6 +3331,14 @@ def _worker_loop():
                 f"replied_at={d.get('replied_at')} stage=media force_freeform=True",
                 flush=True,
             )
+        # Always use the latest saved caption (from delivery-settings) so
+        # updating the message after enqueue takes effect immediately.
+        live_caption = (_read_delivery_settings().get("operator_caption") or "").strip()
+        if live_caption:
+            d["operator_caption"] = live_caption
+        else:
+            d.pop("operator_caption", None)
+
         try:
             if force_freeform and hasattr(_PROVIDER, "send"):
                 # send() accepts the optional force_freeform kwarg on the
@@ -3854,6 +3862,19 @@ def deliveries_delete_bulk():
 @app.route("/deliveries/worker", methods=["GET"])
 def deliveries_worker_status():
     return jsonify({"status": "success", "worker": _worker_status()})
+
+
+@app.route("/deliveries/caption", methods=["GET", "POST"])
+def deliveries_caption():
+    """Read or set the operator broadcast caption sent with every media."""
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        caption = (payload.get("caption") or "").strip()
+        _write_delivery_settings({"operator_caption": caption or None})
+    return jsonify({
+        "status":  "success",
+        "caption": (_read_delivery_settings().get("operator_caption") or ""),
+    })
 
 
 @app.route("/deliveries/send-gap", methods=["GET", "POST"])
