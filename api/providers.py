@@ -453,6 +453,14 @@ class WhatsAppCloudProvider(BaseProvider):
         # caption reaches recipients who are within Meta's 24h window.
         has_caption = bool((delivery.get("operator_caption") or "").strip())
         template_name = None if (force_freeform or has_caption) else self._template_name_for(kind)
+
+        print(
+            f"[wa-send] phone=...{to[-4:]} kind={kind} has_caption={has_caption} "
+            f"mode={'template:'+template_name if template_name else 'freeform'} "
+            f"force={force_freeform}",
+            flush=True,
+        )
+
         if template_name:
             payload = self._build_template_payload(
                 to, kind, media_url, delivery, template_name,
@@ -468,27 +476,30 @@ class WhatsAppCloudProvider(BaseProvider):
         async_status = "Media Sent" if force_freeform else "Pending Callback"
         result = self._post_graph(payload, mode, async_status=async_status)
 
-        # Freeform with caption failed because the recipient is outside Meta's
-        # 24h window (error 131047 / Re-engagement). Fall back to the approved
-        # template so the media still reaches the recipient (caption is dropped).
-        if (
-            not result["ok"]
-            and has_caption
-            and not force_freeform
-            and _is_reengagement_error(result.get("error") or "")
-        ):
+        print(
+            f"[wa-send] result: ok={result.get('ok')} "
+            f"err={(result.get('error') or '')[:120]!r}",
+            flush=True,
+        )
+
+        # If freeform failed with re-engagement (24h window expired), fall back
+        # to the approved template so the media still reaches the recipient.
+        # Applies whether or not there was a caption — covers both caption and
+        # force_freeform paths.
+        if not result["ok"] and _is_reengagement_error(result.get("error") or ""):
             fallback_tpl = self._template_name_for(kind)
             if fallback_tpl:
+                print(
+                    f"[wa-send] re-engagement -> template fallback:{fallback_tpl} "
+                    f"for ...{to[-4:]}",
+                    flush=True,
+                )
                 fb_payload = self._build_template_payload(
                     to, kind, media_url, delivery, fallback_tpl,
                 )
-                print(
-                    f"[provider] freeform rejected (re-engagement) -> "
-                    f"fallback to template:{fallback_tpl} for {to}"
-                )
                 return self._post_graph(
                     fb_payload,
-                    f"template:{fallback_tpl}(caption-fallback)",
+                    f"template:{fallback_tpl}(re-eng-fallback)",
                     async_status="Pending Callback",
                 )
 
