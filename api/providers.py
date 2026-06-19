@@ -449,8 +449,8 @@ class WhatsAppCloudProvider(BaseProvider):
             return {"ok": False, "provider_message_id": None,
                     "error": f"no signed {kind} URL on delivery row"}
 
-        # When operator typed a custom caption, bypass the template so the
-        # caption goes as freeform text. Templates don't support free-text.
+        # When operator typed a custom caption, try freeform first so the
+        # caption reaches recipients who are within Meta's 24h window.
         has_caption = bool((delivery.get("operator_caption") or "").strip())
         template_name = None if (force_freeform or has_caption) else self._template_name_for(kind)
         if template_name:
@@ -466,7 +466,41 @@ class WhatsAppCloudProvider(BaseProvider):
         # recipient already replied, we just shipped them the media —
         # mark the row Media Sent until the webhook confirms Delivered.
         async_status = "Media Sent" if force_freeform else "Pending Callback"
-        return self._post_graph(payload, mode, async_status=async_status)
+        result = self._post_graph(payload, mode, async_status=async_status)
+
+        # Freeform with caption failed because the recipient is outside Meta's
+        # 24h window (error 131047 / Re-engagement). Fall back to the approved
+        # template so the media still reaches the recipient (caption is dropped).
+        if (
+            not result["ok"]
+            and has_caption
+            and not force_freeform
+            and _is_reengagement_error(result.get("error") or "")
+        ):
+            fallback_tpl = self._template_name_for(kind)
+            if fallback_tpl:
+                fb_payload = self._build_template_payload(
+                    to, kind, media_url, delivery, fallback_tpl,
+                )
+                print(
+                    f"[provider] freeform rejected (re-engagement) -> "
+                    f"fallback to template:{fallback_tpl} for {to}"
+                )
+                return self._post_graph(
+                    fb_payload,
+                    f"template:{fallback_tpl}(caption-fallback)",
+                    async_status="Pending Callback",
+                )
+
+        return result
+
+
+def _is_reengagement_error(error_msg: str) -> bool:
+    return (
+        "131047" in error_msg
+        or "131051" in error_msg
+        or "Re-engagement" in error_msg
+    )
 
 
 # ---------------------------------------------------------------------------
