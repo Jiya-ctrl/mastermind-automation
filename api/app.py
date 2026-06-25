@@ -988,9 +988,12 @@ def _derive_gsheet_csv_url(url):
     sheet_id = m.group(1)
     gm = _GSHEET_GID_RE.search(url)
     gid = gm.group(1) if gm else "0"
+    # Only append gid when it was explicitly in the URL — appending &gid=0
+    # causes HTTP 400 for sheets whose first tab has a non-zero GID.
+    gid_param = f"&gid={gid}" if gm else ""
     csv_url = (
         f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-        f"/export?format=csv&gid={gid}"
+        f"/export?format=csv{gid_param}"
     )
     return csv_url, sheet_id, gid
 
@@ -1068,6 +1071,14 @@ def _fetch_gsheet_csv(csv_url):
         raise RuntimeError(
             "sheet is not publicly readable — share it as "
             "'Anyone with the link can view' first"
+        )
+    if resp.status_code == 400:
+        raise RuntimeError(
+            "Google responded HTTP 400 — this usually means the file is an "
+            "uploaded Excel/Office file, not a native Google Sheet. "
+            "Open it in Google Sheets, then go to File > Save as Google Sheets, "
+            "share the NEW sheet as 'Anyone with the link can view', and paste "
+            "that URL instead."
         )
     if resp.status_code >= 400:
         raise RuntimeError(f"Google responded HTTP {resp.status_code}")
