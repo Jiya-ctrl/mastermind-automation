@@ -14964,6 +14964,29 @@ tr.is-selected td { background: rgba(249, 115, 22, 0.06); }
   flex-direction: column;
   gap: 2px;
   padding: 2px 4px 6px;
+  position: relative;
+}
+.gen-card-delete-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  color: #b91c1c;
+}
+.gen-card:hover .gen-card-delete-btn,
+.gen-card-delete-btn:focus {
+  opacity: 1;
+}
+.gen-card-delete-btn:hover {
+  background: rgba(185, 28, 28, 0.1);
 }
 .gen-card-title {
   display: -webkit-box;

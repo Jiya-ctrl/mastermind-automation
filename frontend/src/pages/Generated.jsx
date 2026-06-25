@@ -277,6 +277,16 @@ export default function Generated() {
     return assets
   }
 
+  function quickDeleteCard(card, e) {
+    e.stopPropagation()
+    setConfirmModal({
+      assets:  [{ stem: card.stem, kind: card.type }],
+      title:   'Delete this file?',
+      message: `${card.filename} will be permanently removed from disk.`,
+      cta:     'Delete',
+    })
+  }
+
   function confirmDeleteSelected() {
     const assets = selectedAssets()
     if (assets.length === 0) return
@@ -574,6 +584,13 @@ export default function Generated() {
                 <span className="gen-card-sub">
                   {subtitle} · {formatGeneratedAt(card.createdAt)}
                 </span>
+                <button
+                  type="button"
+                  className="gen-card-delete-btn"
+                  title="Delete this file"
+                  onClick={(e) => quickDeleteCard(card, e)}
+                  aria-label={`Delete ${card.filename}`}
+                >🗑</button>
               </figcaption>
             </figure>
           )
